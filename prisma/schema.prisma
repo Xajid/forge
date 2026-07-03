@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  password      String?
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  sessions      Session[]
+  favorites     Favorite[]
+  recentTools   RecentTool[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  expiresAt    DateTime
+  token        String   @unique
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  toolId    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, toolId])
+}
+
+model RecentTool {
+  id        String   @id @default(cuid())
+  userId    String
+  toolId    String
+  label     String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RecordedRequest {
+  id            String   @id @default(cuid())
+  userId        String?
+  endpointId    String
+  endpoint      RequestEndpoint @relation(fields: [endpointId], references: [id])
+  method        String
+  path          String
+  headers       String
+  query         String?
+  body          String?
+  statusCode    Int?
+  responseTime  Int?
+  ipAddress     String?
+  createdAt     DateTime @default(now())
+}
+
+model RequestEndpoint {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  requests  RecordedRequest[]
+}
+
+model PromptVersion {
+  id          String   @id @default(cuid())
+  userId      String?
+  projectId   String
+  title       String
+  content     String
+  version     Int
+  tags        String?
+  notes       String?
+  variables   String?
+  parentId    String?
+  createdAt   DateTime @default(now())
+}
+
+model PromptProject {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  description String?
+  createdAt DateTime @default(now())
+}
+
+model AiResponse {
+  id          String   @id @default(cuid())
+  userId      String?
+  promptVersionId String?
+  prompt      String
+  response    String
+  model       String?
+  tokens      Int?
+  createdAt   DateTime @default(now())
+}
+
+model PrReview {
+  id          String   @id @default(cuid())
+  userId      String?
+  title       String?
+  diff        String
+  review      String?
+  model       String?
+  score       Float?
+  createdAt   DateTime @default(now())
+}
+
+model OpenApiSpec {
+  id          String   @id @default(cuid())
+  userId      String?
+  name        String
+  content     String
+  isActive    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model FirebaseReport {
+  id          String   @id @default(cuid())
+  userId      String?
+  name        String
+  data        String
+  recommendations String?
+  createdAt   DateTime @default(now())
+}
