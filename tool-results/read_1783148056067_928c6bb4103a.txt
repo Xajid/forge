@@ -1,0 +1,763 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useCallback, useEffect } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+     6→import ReactMarkdown from 'react-markdown';
+     7→import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+     8→import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+     9→
+    10→import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
+    11→import { GlassCard } from '@/components/forge/GlassCard';
+    12→import { GlowButton } from '@/components/forge/GlowButton';
+    13→import { EmptyState } from '@/components/forge/EmptyState';
+    14→import { Shimmer, ShimmerCard } from '@/components/forge/Shimmer';
+    15→import { ForgeBadge } from '@/components/forge/ForgeBadge';
+    16→import { AnimatedInput } from '@/components/forge/AnimatedInput';
+    17→import { ScrollArea } from '@/components/ui/scroll-area';
+    18→import { Separator } from '@/components/ui/separator';
+    19→import { useToast } from '@/hooks/use-toast';
+    20→
+    21→import {
+    22→  Send,
+    23→  FileCode,
+    24→  GitPullRequest,
+    25→  Trash2,
+    26→  Copy,
+    27→  Check,
+    28→  RefreshCw,
+    29→  History,
+    30→  Sparkles,
+    31→  X,
+    32→  Clock,
+    33→  Github,
+    34→  AlignLeft,
+    35→  PanelLeftClose,
+    36→  PanelLeftOpen,
+    37→  ArrowDownToLine,
+    38→} from 'lucide-react';
+    39→
+    40→// --- Types ---
+    41→interface ReviewRecord {
+    42→  id: string;
+    43→  title: string | null;
+    44→  score: number | null;
+    45→  createdAt: string;
+    46→}
+    47→
+    48→interface FullReview extends ReviewRecord {
+    49→  diff: string;
+    50→  review: string | null;
+    51→  model: string | null;
+    52→}
+    53→
+    54→// --- Sample Diff ---
+    55→const SAMPLE_DIFF = `diff --git a/src/api/users.ts b/src/api/users.ts
+    56→index 1234567..abcdefg 100644
+    57→--- a/src/api/users.ts
+    58→+++ b/src/api/users.ts
+    59→@@ -1,15 +1,22 @@
+    60→ import { db } from '../db';
+    61→ 
+    62→-export async function getUser(id: string) {
+    63→-  const user = await db.user.findUnique({ where: { id } });
+    64→-  return user;
+    65→+export async function getUser(id: string, includeDeleted: boolean = false) {
+    66→+  if (!id) return null;
+    67→+  
+    68→+  const user = await db.user.findUnique({ 
+    69→+    where: { id },
+    70→+    include: {
+    71→+      posts: true,
+    72→+      profile: true
+    73→+    }
+    74→+  });
+    75→+  
+    76→+  if (!user && includeDeleted) {
+    77→+    return db.deletedUser.findFirst({ where: { originalId: id } });
+    78→+  }
+    79→+  return user;
+    80→ }
+    81→ 
+    82→-export async function updateUser(id: string, data: any) {
+    83→-  await db.user.update({ where: { id }, data });
+    84→+export async function updateUser(id: string, data: Partial<User>) {
+    85→+  if (!id) throw new Error('User ID is required');
+    86→+  const user = await db.user.update({ where: { id }, data });
+    87→+  return user;
+    88→ }
+    89→ 
+    90→-export async function deleteUser(id: string) {
+    91→-  await db.user.delete({ where: { id } });
+    92→+export async function deleteUser(id: string, hardDelete: boolean = false) {
+    93→+  if (hardDelete) {
+    94→+    await db.user.delete({ where: { id } });
+    95→+  } else {
+    96→+    await db.user.update({ where: { id }, data: { deletedAt: new Date() } });
+    97→+  }
+    98→ }`;
+    99→
+   100→// --- Animated Dots ---
+   101→function AnimatedDots() {
+   102→  const [dots, setDots] = useState('');
+   103→  useEffect(() => {
+   104→    const iv = setInterval(() => {
+   105→      setDots((p) => (p.length >= 3 ? '' : p + '.'));
+   106→    }, 500);
+   107→    return () => clearInterval(iv);
+   108→  }, []);
+   109→  return <span>{dots}</span>;
+   110→}
+   111→
+   112→// --- Score Ring ---
+   113→function ScoreDisplay({ score }: { score: number | null }) {
+   114→  if (score === null) return null;
+   115→
+   116→  let color = '#f87171';
+   117→  let bg = 'rgba(239, 68, 68, 0.08)';
+   118→  let border = 'rgba(239, 68, 68, 0.25)';
+   119→  let ring = 'rgba(239, 68, 68, 0.6)';
+   120→  let label = 'Needs Work';
+   121→
+   122→  if (score >= 8) {
+   123→    color = '#4ade80';
+   124→    bg = 'rgba(34, 197, 94, 0.08)';
+   125→    border = 'rgba(34, 197, 94, 0.25)';
+   126→    ring = 'rgba(34, 197, 94, 0.6)';
+   127→    label = 'Excellent';
+   128→  } else if (score >= 5) {
+   129→    color = '#facc15';
+   130→    bg = 'rgba(234, 179, 8, 0.08)';
+   131→    border = 'rgba(234, 179, 8, 0.25)';
+   132→    ring = 'rgba(234, 179, 8, 0.6)';
+   133→    label = 'Fair';
+   134→  }
+   135→
+   136→  return (
+   137→    <motion.div
+   138→      initial={{ opacity: 0, scale: 0.9 }}
+   139→      animate={{ opacity: 1, scale: 1 }}
+   140→      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+   141→      className="flex items-center gap-4 mb-6"
+   142→    >
+   143→      <div
+   144→        className="relative flex items-center justify-center w-20 h-20 rounded-2xl border"
+   145→        style={{ backgroundColor: bg, borderColor: border }}
+   146→      >
+   147→        {/* Glow effect behind the score */}
+   148→        <div
+   149→          className="absolute inset-0 rounded-2xl blur-xl opacity-30"
+   150→          style={{ backgroundColor: ring }}
+   151→        />
+   152→        <span
+   153→          className="relative text-3xl font-bold tabular-nums"
+   154→          style={{ color }}
+   155→        >
+   156→          {score}
+   157→        </span>
+   158→        <span className="absolute bottom-2 right-3 text-[10px] text-[#55556a] font-medium">
+   159→          /10
+   160→        </span>
+   161→      </div>
+   162→      <div>
+   163→        <div className="text-sm font-semibold" style={{ color }}>
+   164→          {label}
+   165→        </div>
+   166→        <div className="text-xs text-[#55556a] mt-0.5">AI Code Review Score</div>
+   167→      </div>
+   168→    </motion.div>
+   169→  );
+   170→}
+   171→
+   172→// --- Markdown Renderer ---
+   173→function ReviewMarkdown({ content }: { content: string }) {
+   174→  return (
+   175→    <div className="prose-invert max-w-none text-sm text-[#c0c0d0] [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-[#f0f0f5] [&_h2]:mt-7 [&_h2]:mb-3 [&_h2]:pb-2 [&_h2]:border-b [&_h2]:border-[rgba(255,255,255,0.06)] [&_h3]:text-sm [&_h3]:font-medium [&_h3]:text-[#c0c0d0] [&_h3]:mt-5 [&_h3]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-1.5 [&_li]:text-sm [&_li]:leading-relaxed [&_p]:leading-relaxed [&_p]:mb-2 [&_strong]:text-[#f0f0f5] [&_strong]:font-medium [&_code]:text-[#a78bfa] [&_code:not(pre_*)]:bg-[rgba(255,255,255,0.06)] [&_code:not(pre_*)]:px-1.5 [&_code:not(pre_*)]:py-0.5 [&_code:not(pre_*)]:rounded [&_code:not(pre_*)]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-[#8b5cf6]/40 [&_blockquote]:pl-4 [&_blockquote]:text-[#8888a0] [&_blockquote]:italic [&_hr]:border-[rgba(255,255,255,0.06)] [&_hr]:my-5">
+   176→      <ReactMarkdown
+   177→        components={{
+   178→          code({ className, children, ...props }) {
+   179→            const match = /language-(\w+)/.exec(className || '');
+   180→            const codeStr = String(children).replace(/\n$/, '');
+   181→            if (match) {
+   182→              return (
+   183→                <div className="rounded-lg overflow-hidden my-3 border border-[rgba(255,255,255,0.06)]">
+   184→                  <SyntaxHighlighter
+   185→                    style={oneDark}
+   186→                    language={match[1]}
+   187→                    PreTag="div"
+   188→                    customStyle={{
+   189→                      margin: 0,
+   190→                      padding: '1rem',
+   191→                      background: 'rgba(0,0,0,0.3)',
+   192→                      fontSize: '0.8rem',
+   193→                    }}
+   194→                  >
+   195→                    {codeStr}
+   196→                  </SyntaxHighlighter>
+   197→                </div>
+   198→              );
+   199→            }
+   200→            return (
+   201→              <code className={className} {...props}>
+   202→                {children}
+   203→              </code>
+   204→            );
+   205→          },
+   206→        }}
+   207→      >
+   208→        {content}
+   209→      </ReactMarkdown>
+   210→    </div>
+   211→  );
+   212→}
+   213→
+   214→// --- History Item ---
+   215→function HistoryItem({
+   216→  item,
+   217→  isSelected,
+   218→  onClick,
+   219→  onDelete,
+   220→}: {
+   221→  item: ReviewRecord;
+   222→  isSelected: boolean;
+   223→  onClick: () => void;
+   224→  onDelete: (e: React.MouseEvent) => void;
+   225→}) {
+   226→  const scoreColor =
+   227→    item.score === null
+   228→      ? '#55556a'
+   229→      : item.score >= 8
+   230→        ? '#4ade80'
+   231→        : item.score >= 5
+   232→          ? '#facc15'
+   233→          : '#f87171';
+   234→
+   235→  const date = new Date(item.createdAt);
+   236→  const timeStr = date.toLocaleDateString(undefined, {
+   237→    month: 'short',
+   238→    day: 'numeric',
+   239→    hour: '2-digit',
+   240→    minute: '2-digit',
+   241→  });
+   242→
+   243→  return (
+   244→    <motion.div
+   245→      initial={{ opacity: 0, x: -8 }}
+   246→      animate={{ opacity: 1, x: 0 }}
+   247→      className={`group flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all duration-150 ${
+   248→        isSelected
+   249→          ? 'bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)]'
+   250→          : 'hover:bg-[rgba(255,255,255,0.03)] border border-transparent'
+   251→      }`}
+   252→      onClick={onClick}
+   253→    >
+   254→      <div
+   255→        className="w-9 h-9 rounded-lg flex items-center justify-center text-sm font-bold shrink-0 border border-[rgba(255,255,255,0.04)]"
+   256→        style={{
+   257→          backgroundColor:
+   258→            item.score !== null ? `${scoreColor}15` : 'rgba(255,255,255,0.04)',
+   259→          color: scoreColor,
+   260→        }}
+   261→      >
+   262→        {item.score !== null ? item.score : '?'}
+   263→      </div>
+   264→      <div className="flex-1 min-w-0">
+   265→        <div className="text-sm text-[#f0f0f5] truncate">
+   266→          {item.title || 'Untitled Review'}
+   267→        </div>
+   268→        <div className="text-xs text-[#55556a] flex items-center gap-1 mt-0.5">
+   269→          <Clock className="w-3 h-3" />
+   270→          {timeStr}
+   271→        </div>
+   272→      </div>
+   273→      <button
+   274→        onClick={onDelete}
+   275→        className="p-1.5 rounded-md text-[#55556a] hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover:opacity-100 transition-all shrink-0"
+   276→      >
+   277→        <Trash2 className="w-3.5 h-3.5" />
+   278→      </button>
+   279→    </motion.div>
+   280→  );
+   281→}
+   282→
+   283→// --- Loading State ---
+   284→function ReviewLoadingState() {
+   285→  return (
+   286→    <div className="flex flex-col items-center justify-center h-full py-12 gap-4">
+   287→      <motion.div
+   288→        animate={{ rotate: 360 }}
+   289→        transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+   290→      >
+   291→        <Sparkles className="w-8 h-8 text-[#8b5cf6]" />
+   292→      </motion.div>
+   293→      <div className="text-sm text-[#8888a0]">
+   294→        Analyzing your code<AnimatedDots />
+   295→      </div>
+   296→      <div className="text-xs text-[#55556a] text-center">
+   297→        Reviewing for bugs, security issues, and best practices
+   298→      </div>
+   299→      <div className="w-full max-w-sm mt-4 space-y-3 px-4">
+   300→        <Shimmer lines={3} />
+   301→        <ShimmerCard />
+   302→        <Shimmer lines={4} />
+   303→      </div>
+   304→    </div>
+   305→  );
+   306→}
+   307→
+   308→// --- Resize Handle ---
+   309→function ResizeHandle() {
+   310→  return (
+   311→    <PanelResizeHandle className="w-px bg-[rgba(255,255,255,0.06)] hover:bg-[#8b5cf6]/30 active:bg-[#8b5cf6]/50 transition-colors duration-200 relative group/data">
+   312→      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-[#8b5cf6]/40 opacity-0 group-hover/data:opacity-100 transition-opacity" />
+   313→    </PanelResizeHandle>
+   314→  );
+   315→}
+   316→
+   317→// =====================
+   318→// MAIN COMPONENT
+   319→// =====================
+   320→export default function PrReview() {
+   321→  const { toast } = useToast();
+   322→  const [diff, setDiff] = useState('');
+   323→  const [title, setTitle] = useState('');
+   324→  const [currentReview, setCurrentReview] = useState<FullReview | null>(null);
+   325→  const [isReviewing, setIsReviewing] = useState(false);
+   326→  const [reviews, setReviews] = useState<ReviewRecord[]>([]);
+   327→  const [showHistory, setShowHistory] = useState(false);
+   328→  const [copiedReview, setCopiedReview] = useState(false);
+   329→  const [copiedGithub, setCopiedGithub] = useState(false);
+   330→
+   331→  const lineCount = diff ? diff.split('\n').length : 0;
+   332→  const charCount = diff.length;
+   333→  const hasReview = currentReview !== null && !isReviewing;
+   334→
+   335→  // Fetch history
+   336→  const fetchReviews = useCallback(async () => {
+   337→    try {
+   338→      const res = await fetch('/api/pr-review/reviews');
+   339→      if (res.ok) {
+   340→        const data = await res.json();
+   341→        setReviews(data);
+   342→      }
+   343→    } catch {
+   344→      // silent
+   345→    }
+   346→  }, []);
+   347→
+   348→  useEffect(() => {
+   349→    fetchReviews();
+   350→  }, [fetchReviews]);
+   351→
+   352→  // Submit review
+   353→  const handleSubmit = useCallback(async () => {
+   354→    if (!diff.trim() || isReviewing) return;
+   355→
+   356→    setIsReviewing(true);
+   357→    setCurrentReview(null);
+   358→
+   359→    try {
+   360→      const res = await fetch('/api/pr-review/review', {
+   361→        method: 'POST',
+   362→        headers: { 'Content-Type': 'application/json' },
+   363→        body: JSON.stringify({ diff, title: title.trim() || undefined }),
+   364→      });
+   365→
+   366→      if (!res.ok) {
+   367→        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+   368→        throw new Error(err.error || 'Failed to generate review');
+   369→      }
+   370→
+   371→      const saved = await res.json();
+   372→      setCurrentReview(saved);
+   373→      toast({
+   374→        title: 'Review complete',
+   375→        description: `Score: ${saved.score ?? 'N/A'}/10`,
+   376→      });
+   377→      fetchReviews();
+   378→    } catch (err: unknown) {
+   379→      toast({
+   380→        title: 'Review failed',
+   381→        description: err instanceof Error ? err.message : 'Please try again.',
+   382→        variant: 'destructive',
+   383→      });
+   384→    } finally {
+   385→      setIsReviewing(false);
+   386→    }
+   387→  }, [diff, title, isReviewing, toast, fetchReviews]);
+   388→
+   389→  // Load example
+   390→  const handleLoadExample = useCallback(() => {
+   391→    setDiff(SAMPLE_DIFF);
+   392→    setTitle('Refactor user API with soft delete and type safety');
+   393→  }, []);
+   394→
+   395→  // Clear
+   396→  const handleClear = useCallback(() => {
+   397→    setDiff('');
+   398→    setTitle('');
+   399→  }, []);
+   400→
+   401→  // Copy review
+   402→  const handleCopyReview = useCallback(async () => {
+   403→    if (!currentReview?.review) return;
+   404→    await navigator.clipboard.writeText(currentReview.review);
+   405→    setCopiedReview(true);
+   406→    setTimeout(() => setCopiedReview(false), 2000);
+   407→    toast({ title: 'Copied to clipboard' });
+   408→  }, [currentReview, toast]);
+   409→
+   410→  // Copy as GitHub comment
+   411→  const handleCopyGithub = useCallback(async () => {
+   412→    if (!currentReview?.review) return;
+   413→    const formatted = currentReview.review
+   414→      .replace(/^## Score:.+$/m, '')
+   415→      .replace(/^## /gm, '### ')
+   416→      .trim();
+   417→
+   418→    const gh = `## PR Review Bot\n\n${currentReview.score !== null ? `**Score: ${currentReview.score}/10**\n\n` : ''}${formatted}`;
+   419→    await navigator.clipboard.writeText(gh);
+   420→    setCopiedGithub(true);
+   421→    setTimeout(() => setCopiedGithub(false), 2000);
+   422→    toast({ title: 'GitHub comment copied' });
+   423→  }, [currentReview, toast]);
+   424→
+   425→  // Regenerate
+   426→  const handleRegenerate = useCallback(() => {
+   427→    if (!diff.trim()) return;
+   428→    handleSubmit();
+   429→  }, [diff, handleSubmit]);
+   430→
+   431→  // Load history item
+   432→  const handleLoadHistory = useCallback(async (id: string) => {
+   433→    try {
+   434→      const res = await fetch(`/api/pr-review/reviews/${id}`);
+   435→      if (res.ok) {
+   436→        const data = await res.json();
+   437→        setCurrentReview(data);
+   438→        setDiff(data.diff);
+   439→        setTitle(data.title || '');
+   440→        setShowHistory(false);
+   441→      }
+   442→    } catch {
+   443→      // silent
+   444→    }
+   445→  }, []);
+   446→
+   447→  // Delete review
+   448→  const handleDeleteReview = useCallback(
+   449→    async (e: React.MouseEvent, id: string) => {
+   450→      e.stopPropagation();
+   451→      try {
+   452→        const res = await fetch(`/api/pr-review/reviews/${id}`, {
+   453→          method: 'DELETE',
+   454→        });
+   455→        if (res.ok) {
+   456→          setReviews((prev) => prev.filter((r) => r.id !== id));
+   457→          if (currentReview?.id === id) {
+   458→            setCurrentReview(null);
+   459→          }
+   460→          toast({ title: 'Review deleted' });
+   461→        }
+   462→      } catch {
+   463→        // silent
+   464→      }
+   465→    },
+   466→    [currentReview, toast]
+   467→  );
+   468→
+   469→  return (
+   470→    <WorkspaceLayout
+   471→      actions={
+   472→        <div className="flex items-center gap-1.5">
+   473→          <GlowButton
+   474→            variant="ghost"
+   475→            size="icon"
+   476→            className="h-8 w-8"
+   477→            onClick={() => setShowHistory((p) => !p)}
+   478→          >
+   479→            {showHistory ? (
+   480→              <PanelLeftClose className="w-4 h-4 text-[#8888a0]" />
+   481→            ) : (
+   482→              <PanelLeftOpen className="w-4 h-4 text-[#8888a0]" />
+   483→            )}
+   484→          </GlowButton>
+   485→          {hasReview && (
+   486→            <>
+   487→              <GlowButton variant="ghost" size="sm" onClick={handleCopyReview}>
+   488→                {copiedReview ? (
+   489→                  <Check className="w-3.5 h-3.5" />
+   490→                ) : (
+   491→                  <Copy className="w-3.5 h-3.5" />
+   492→                )}
+   493→                Copy
+   494→              </GlowButton>
+   495→              <GlowButton variant="ghost" size="sm" onClick={handleCopyGithub}>
+   496→                {copiedGithub ? (
+   497→                  <Check className="w-3.5 h-3.5" />
+   498→                ) : (
+   499→                  <Github className="w-3.5 h-3.5" />
+   500→                )}
+   501→                GitHub
+   502→              </GlowButton>
+   503→              <GlowButton variant="ghost" size="sm" onClick={handleRegenerate}>
+   504→                <RefreshCw className="w-3.5 h-3.5" />
+   505→                Regenerate
+   506→              </GlowButton>
+   507→            </>
+   508→          )}
+   509→        </div>
+   510→      }
+   511→    >
+   512→      <div className="flex gap-4 h-[calc(100vh-10rem)]">
+   513→        {/* ====== HISTORY SIDEBAR ====== */}
+   514→        <AnimatePresence>
+   515→          {showHistory && (
+   516→            <motion.div
+   517→              initial={{ width: 0, opacity: 0 }}
+   518→              animate={{ width: 280, opacity: 1 }}
+   519→              exit={{ width: 0, opacity: 0 }}
+   520→              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   521→              className="shrink-0 overflow-hidden"
+   522→            >
+   523→              <GlassCard className="h-full flex flex-col overflow-hidden">
+   524→                <div className="px-4 py-3 border-b border-[rgba(255,255,255,0.06)] flex items-center justify-between">
+   525→                  <div className="flex items-center gap-2">
+   526→                    <History className="w-4 h-4 text-[#8b5cf6]" />
+   527→                    <span className="text-sm font-medium text-[#f0f0f5]">
+   528→                      History
+   529→                    </span>
+   530→                    {reviews.length > 0 && (
+   531→                      <ForgeBadge variant="default">{reviews.length}</ForgeBadge>
+   532→                    )}
+   533→                  </div>
+   534→                </div>
+   535→                <ScrollArea className="flex-1">
+   536→                  {reviews.length === 0 ? (
+   537→                    <div className="py-12 px-4 text-center">
+   538→                      <GitPullRequest className="w-8 h-8 text-[#333348] mx-auto mb-2" />
+   539→                      <p className="text-xs text-[#55556a]">
+   540→                        No reviews yet
+   541→                      </p>
+   542→                    </div>
+   543→                  ) : (
+   544→                    <div className="p-2 space-y-1">
+   545→                      {reviews.map((item) => (
+   546→                        <HistoryItem
+   547→                          key={item.id}
+   548→                          item={item}
+   549→                          isSelected={currentReview?.id === item.id}
+   550→                          onClick={() => handleLoadHistory(item.id)}
+   551→                          onDelete={(e) => handleDeleteReview(e, item.id)}
+   552→                        />
+   553→                      ))}
+   554→                    </div>
+   555→                  )}
+   556→                </ScrollArea>
+   557→              </GlassCard>
+   558→            </motion.div>
+   559→          )}
+   560→        </AnimatePresence>
+   561→
+   562→        {/* ====== MAIN SPLIT VIEW ====== */}
+   563→        <div className="flex-1 min-w-0">
+   564→          <PanelGroup direction="horizontal" className="h-full">
+   565→            {/* --- LEFT: Input Panel --- */}
+   566→            <Panel defaultSize={50} minSize={30} order={1}>
+   567→              <GlassCard className="h-full flex flex-col overflow-hidden" glow="purple">
+   568→                {/* Header */}
+   569→                <div className="px-5 pt-4 pb-0">
+   570→                  <div className="flex items-center justify-between mb-3">
+   571→                    <div className="flex items-center gap-2">
+   572→                      <div className="w-6 h-6 rounded-md bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center">
+   573→                        <FileCode className="w-3.5 h-3.5 text-[#a78bfa]" />
+   574→                      </div>
+   575→                      <span className="text-sm font-medium text-[#f0f0f5]">
+   576→                        Diff Input
+   577→                      </span>
+   578→                    </div>
+   579→                    <div className="flex items-center gap-1">
+   580→                      <GlowButton variant="ghost" size="sm" onClick={handleLoadExample}>
+   581→                        <AlignLeft className="w-3.5 h-3.5" />
+   582→                        Example
+   583→                      </GlowButton>
+   584→                      {diff && (
+   585→                        <GlowButton variant="ghost" size="sm" onClick={handleClear}>
+   586→                          <X className="w-3.5 h-3.5" />
+   587→                        </GlowButton>
+   588→                      )}
+   589→                    </div>
+   590→                  </div>
+   591→
+   592→                  {/* Title input */}
+   593→                  <AnimatedInput
+   594→                    placeholder="PR title (optional)..."
+   595→                    value={title}
+   596→                    onChange={(e) => setTitle(e.target.value)}
+   597→                    size="sm"
+   598→                    icon={<GitPullRequest className="w-3.5 h-3.5" />}
+   599→                    className="mb-3"
+   600→                  />
+   601→                </div>
+   602→
+   603→                {/* Textarea */}
+   604→                <div className="flex-1 px-5 pb-3 min-h-0">
+   605→                  <textarea
+   606→                    value={diff}
+   607→                    onChange={(e) => setDiff(e.target.value)}
+   608→                    placeholder={`Paste your git diff here...\n\nYou can use:\n  git diff\n  git diff main...feature\n  git diff --staged\n\nThen paste the output above.`}
+   609→                    className="w-full h-full rounded-lg bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)] text-[#c0c0d0] placeholder:text-[#333348] forge-code text-[13px] leading-relaxed p-4 focus:outline-none focus:border-[#8b5cf6]/50 focus:ring-1 focus:ring-[#8b5cf6]/20 transition-all duration-200 resize-none"
+   610→                    spellCheck={false}
+   611→                  />
+   612→                </div>
+   613→
+   614→                {/* Footer */}
+   615→                <div className="px-5 py-3 border-t border-[rgba(255,255,255,0.06)] flex items-center justify-between">
+   616→                  <div className="flex items-center gap-3 text-xs text-[#55556a]">
+   617→                    <span className="flex items-center gap-1">
+   618→                      <ArrowDownToLine className="w-3 h-3" />
+   619→                      {lineCount} lines
+   620→                    </span>
+   621→                    <span>{charCount.toLocaleString()} chars</span>
+   622→                  </div>
+   623→                  <GlowButton
+   624→                    variant="primary"
+   625→                    size="md"
+   626→                    onClick={handleSubmit}
+   627→                    disabled={!diff.trim() || isReviewing}
+   628→                    glow
+   629→                  >
+   630→                    {isReviewing ? (
+   631→                      <>
+   632→                        <motion.div
+   633→                          animate={{ rotate: 360 }}
+   634→                          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+   635→                        >
+   636→                          <RefreshCw className="w-4 h-4" />
+   637→                        </motion.div>
+   638→                        Reviewing...
+   639→                      </>
+   640→                    ) : (
+   641→                      <>
+   642→                        <Send className="w-4 h-4" />
+   643→                        Review Code
+   644→                      </>
+   645→                    )}
+   646→                  </GlowButton>
+   647→                </div>
+   648→              </GlassCard>
+   649→            </Panel>
+   650→
+   651→            <ResizeHandle />
+   652→
+   653→            {/* --- RIGHT: Review Panel --- */}
+   654→            <Panel defaultSize={50} minSize={30} order={2}>
+   655→              <GlassCard className="h-full flex flex-col overflow-hidden" glow="purple">
+   656→                {/* Review header */}
+   657→                <div className="px-5 pt-4 pb-0 flex items-center justify-between">
+   658→                  <div className="flex items-center gap-2">
+   659→                    <div className="w-6 h-6 rounded-md bg-[rgba(59,130,246,0.1)] border border-[rgba(59,130,246,0.2)] flex items-center justify-center">
+   660→                      <Sparkles className="w-3.5 h-3.5 text-[#60a5fa]" />
+   661→                    </div>
+   662→                    <span className="text-sm font-medium text-[#f0f0f5]">
+   663→                      AI Review
+   664→                    </span>
+   665→                    {hasReview && currentReview.score !== null && (
+   666→                      <ForgeBadge
+   667→                        variant={
+   668→                          currentReview.score >= 8
+   669→                            ? 'success'
+   670→                            : currentReview.score >= 5
+   671→                              ? 'warning'
+   672→                              : 'destructive'
+   673→                        }
+   674→                      >
+   675→                        {currentReview.score}/10
+   676→                      </ForgeBadge>
+   677→                    )}
+   678→                  </div>
+   679→                  {hasReview && (
+   680→                    <div className="flex items-center gap-1">
+   681→                      <GlowButton
+   682→                        variant="ghost"
+   683→                        size="sm"
+   684→                        onClick={handleCopyReview}
+   685→                        className="h-7"
+   686→                      >
+   687→                        {copiedReview ? (
+   688→                          <Check className="w-3 h-3 text-[#4ade80]" />
+   689→                        ) : (
+   690→                          <Copy className="w-3 h-3" />
+   691→                        )}
+   692→                      </GlowButton>
+   693→                      <GlowButton
+   694→                        variant="ghost"
+   695→                        size="sm"
+   696→                        onClick={handleCopyGithub}
+   697→                        className="h-7"
+   698→                      >
+   699→                        {copiedGithub ? (
+   700→                          <Check className="w-3 h-3 text-[#4ade80]" />
+   701→                        ) : (
+   702→                          <Github className="w-3 h-3" />
+   703→                        )}
+   704→                      </GlowButton>
+   705→                    </div>
+   706→                  )}
+   707→                </div>
+   708→
+   709→                {/* Review content */}
+   710→                <div className="flex-1 min-h-0 mt-3">
+   711→                  <AnimatePresence mode="wait">
+   712→                    {isReviewing ? (
+   713→                      <motion.div
+   714→                        key="loading"
+   715→                        initial={{ opacity: 0 }}
+   716→                        animate={{ opacity: 1 }}
+   717→                        exit={{ opacity: 0 }}
+   718→                        className="h-full"
+   719→                      >
+   720→                        <ReviewLoadingState />
+   721→                      </motion.div>
+   722→                    ) : currentReview ? (
+   723→                      <motion.div
+   724→                        key={currentReview.id}
+   725→                        initial={{ opacity: 0, y: 8 }}
+   726→                        animate={{ opacity: 1, y: 0 }}
+   727→                        exit={{ opacity: 0 }}
+   728→                        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   729→                        className="h-full"
+   730→                      >
+   731→                        <ScrollArea className="h-full">
+   732→                          <div className="px-6 pb-6">
+   733→                            <ScoreDisplay score={currentReview.score} />
+   734→                            <Separator className="mb-5 bg-[rgba(255,255,255,0.06)]" />
+   735→                            <ReviewMarkdown content={currentReview.review || ''} />
+   736→                          </div>
+   737→                        </ScrollArea>
+   738→                      </motion.div>
+   739→                    ) : (
+   740→                      <motion.div
+   741→                        key="empty"
+   742→                        initial={{ opacity: 0 }}
+   743→                        animate={{ opacity: 1 }}
+   744→                        exit={{ opacity: 0 }}
+   745→                        className="h-full"
+   746→                      >
+   747→                        <EmptyState
+   748→                          icon={<Sparkles className="w-12 h-12" />}
+   749→                          title="No Review Yet"
+   750→                          description="Paste a Git diff on the left and click 'Review Code' to get an AI-powered code review with bug detection, security analysis, and best practice suggestions."
+   751→                        />
+   752→                      </motion.div>
+   753→                    )}
+   754→                  </AnimatePresence>
+   755→                </div>
+   756→              </GlassCard>
+   757→            </Panel>
+   758→          </PanelGroup>
+   759→        </div>
+   760→      </div>
+   761→    </WorkspaceLayout>
+   762→  );
+   763→}

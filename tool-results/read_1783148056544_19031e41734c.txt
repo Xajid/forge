@@ -1,0 +1,1087 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useCallback, useRef, useEffect } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
+     6→import { GlassCard } from '@/components/forge/GlassCard';
+     7→import { GlowButton } from '@/components/forge/GlowButton';
+     8→import { MethodBadge, StatusBadge, ForgeBadge } from '@/components/forge/ForgeBadge';
+     9→import { CodeViewer } from '@/components/forge/CodeViewer';
+    10→import { EmptyState } from '@/components/forge/EmptyState';
+    11→import { AnimatedInput, AnimatedTextarea } from '@/components/forge/AnimatedInput';
+    12→import { Shimmer, ShimmerCard } from '@/components/forge/Shimmer';
+    13→import { GradientBorder } from '@/components/forge/GradientBorder';
+    14→import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+    15→import { ScrollArea } from '@/components/ui/scroll-area';
+    16→import {
+    17→  Upload,
+    18→  FileText,
+    19→  Trash2,
+    20→  Play,
+    21→  Server,
+    22→  Clock,
+    23→  ArrowRight,
+    24→  Copy,
+    25→  Check,
+    26→  FileUp,
+    27→  X,
+    28→  ChevronRight,
+    29→  Zap,
+    30→  List,
+    31→  FileCode,
+    32→  Send,
+    33→  RefreshCw,
+    34→  Link2,
+    35→  Layers,
+    36→} from 'lucide-react';
+    37→
+    38→// ---- Types ----
+    39→
+    40→interface SpecSummary {
+    41→  id: string;
+    42→  name: string;
+    43→  isActive: boolean;
+    44→  endpointCount: number;
+    45→  createdAt: string;
+    46→}
+    47→
+    48→interface Endpoint {
+    49→  method: string;
+    50→  path: string;
+    51→  summary: string;
+    52→  operationId?: string;
+    53→  tags: string[];
+    54→  requestSchema?: Record<string, unknown>;
+    55→  responseSchema?: Record<string, unknown>;
+    56→  statusCode: number;
+    57→}
+    58→
+    59→interface SpecDetail extends SpecSummary {
+    60→  info: { title?: string; version?: string; description?: string };
+    61→  openApiVersion?: string;
+    62→  endpoints: Endpoint[];
+    63→  tags: string[];
+    64→}
+    65→
+    66→interface MockResponse {
+    67→  statusCode: number;
+    68→  headers: Record<string, string>;
+    69→  body: unknown;
+    70→  meta: {
+    71→    endpoint: string;
+    72→    method: string;
+    73→    summary: string;
+    74→    operationId?: string;
+    75→    tags: string[];
+    76→  };
+    77→}
+    78→
+    79→interface RequestLogEntry {
+    80→  id: string;
+    81→  specId: string;
+    82→  specName: string;
+    83→  method: string;
+    84→  path: string;
+    85→  statusCode: number;
+    86→  timestamp: string;
+    87→  duration: number;
+    88→}
+    89→
+    90→// ---- Sample spec for quick start ----
+    91→
+    92→const SAMPLE_SPEC = `openapi: 3.0.3
+    93→info:
+    94→  title: Pet Store API
+    95→  version: 1.0.0
+    96→  description: A sample Pet Store API for testing the OpenAPI Mock Server
+    97→paths:
+    98→  /pets:
+    99→    get:
+   100→      summary: List all pets
+   101→      operationId: listPets
+   102→      tags:
+   103→        - Pets
+   104→      parameters:
+   105→        - name: limit
+   106→          in: query
+   107→          schema:
+   108→            type: integer
+   109→            default: 20
+   110→        - name: offset
+   111→          in: query
+   112→          schema:
+   113→            type: integer
+   114→            default: 0
+   115→      responses:
+   116→        '200':
+   117→          description: A list of pets
+   118→          content:
+   119→            application/json:
+   120→              schema:
+   121→                type: object
+   122→                properties:
+   123→                  data:
+   124→                    type: array
+   125→                    items:
+   126→                      $ref: '#/components/schemas/Pet'
+   127→                  total:
+   128→                    type: integer
+   129→                  limit:
+   130→                    type: integer
+   131→                  offset:
+   132→                    type: integer
+   133→    post:
+   134→      summary: Create a pet
+   135→      operationId: createPet
+   136→      tags:
+   137→        - Pets
+   138→      requestBody:
+   139→        required: true
+   140→        content:
+   141→          application/json:
+   142→            schema:
+   143→              $ref: '#/components/schemas/CreatePetInput'
+   144→      responses:
+   145→        '201':
+   146→          description: Pet created
+   147→          content:
+   148→            application/json:
+   149→              schema:
+   150→                $ref: '#/components/schemas/Pet'
+   151→  /pets/{petId}:
+   152→    get:
+   153→      summary: Get a pet by ID
+   154→      operationId: getPetById
+   155→      tags:
+   156→        - Pets
+   157→      parameters:
+   158→        - name: petId
+   159→          in: path
+   160→          required: true
+   161→          schema:
+   162→            type: string
+   163→      responses:
+   164→        '200':
+   165→          description: A pet
+   166→          content:
+   167→            application/json:
+   168→              schema:
+   169→                $ref: '#/components/schemas/Pet'
+   170→        '404':
+   171→          description: Pet not found
+   172→    delete:
+   173→      summary: Delete a pet
+   174→      operationId: deletePet
+   175→      tags:
+   176→        - Pets
+   177→      parameters:
+   178→        - name: petId
+   179→          in: path
+   180→          required: true
+   181→          schema:
+   182→            type: string
+   183→      responses:
+   184→        '204':
+   185→          description: Pet deleted
+   186→  /users:
+   187→    get:
+   188→      summary: List all users
+   189→      operationId: listUsers
+   190→      tags:
+   191→        - Users
+   192→      responses:
+   193→        '200':
+   194→          description: A list of users
+   195→          content:
+   196→            application/json:
+   197→              schema:
+   198→                type: object
+   199→                properties:
+   200→                  data:
+   201→                    type: array
+   202→                    items:
+   203→                      $ref: '#/components/schemas/User'
+   204→                  total:
+   205→                    type: integer
+   206→    post:
+   207→      summary: Create a user
+   208→      operationId: createUser
+   209→      tags:
+   210→        - Users
+   211→      requestBody:
+   212→        required: true
+   213→        content:
+   214→          application/json:
+   215→            schema:
+   216→              $ref: '#/components/schemas/CreateUserInput'
+   217→      responses:
+   218→        '201':
+   219→          description: User created
+   220→          content:
+   221→            application/json:
+   222→              schema:
+   223→                $ref: '#/components/schemas/User'
+   224→  /users/{userId}:
+   225→    get:
+   226→      summary: Get user by ID
+   227→      operationId: getUserById
+   228→      tags:
+   229→        - Users
+   230→      parameters:
+   231→        - name: userId
+   232→          in: path
+   233→          required: true
+   234→          schema:
+   235→            type: string
+   236→      responses:
+   237→        '200':
+   238→          description: A user
+   239→          content:
+   240→            application/json:
+   241→              schema:
+   242→                $ref: '#/components/schemas/User'
+   243→components:
+   244→  schemas:
+   245→    Pet:
+   246→      type: object
+   247→      properties:
+   248→        id:
+   249→          type: string
+   250→          format: uuid
+   251→        name:
+   252→          type: string
+   253→        species:
+   254→          type: string
+   255→          enum: [dog, cat, bird, fish, hamster, rabbit]
+   256→        breed:
+   257→          type: string
+   258→        age:
+   259→          type: integer
+   260→        status:
+   261→          type: string
+   262→          enum: [available, pending, sold]
+   263→        owner:
+   264→          type: object
+   265→          properties:
+   266→            id:
+   267→              type: string
+   268→            name:
+   269→              type: string
+   270→            email:
+   271→              type: string
+   272→              format: email
+   273→        tags:
+   274→          type: array
+   275→          items:
+   276→            type: string
+   277→        createdAt:
+   278→          type: string
+   279→          format: date-time
+   280→        imageUrl:
+   281→          type: string
+   282→          format: uri
+   283→    CreatePetInput:
+   284→      type: object
+   285→      required:
+   286→        - name
+   287→        - species
+   288→      properties:
+   289→        name:
+   290→          type: string
+   291→        species:
+   292→          type: string
+   293→          enum: [dog, cat, bird, fish, hamster, rabbit]
+   294→        breed:
+   295→          type: string
+   296→        age:
+   297→          type: integer
+   298→    User:
+   299→      type: object
+   300→      properties:
+   301→        id:
+   302→          type: string
+   303→          format: uuid
+   304→        username:
+   305→          type: string
+   306→        email:
+   307→          type: string
+   308→          format: email
+   309→        firstName:
+   310→          type: string
+   311→        lastName:
+   312→          type: string
+   313→        role:
+   314→          type: string
+   315→          enum: [admin, user, editor, viewer]
+   316→        avatar:
+   317→          type: string
+   318→          format: uri
+   319→        isActive:
+   320→          type: boolean
+   321→        createdAt:
+   322→          type: string
+   323→          format: date-time
+   324→        lastLoginAt:
+   325→          type: string
+   326→          format: date-time
+   327→    CreateUserInput:
+   328→      type: object
+   329→      required:
+   330→        - username
+   331→        - email
+   332→        - password
+   333→      properties:
+   334→        username:
+   335→          type: string
+   336→        email:
+   337→          type: string
+   338→          format: email
+   339→        password:
+   340→          type: string
+   341→          format: password
+   342→        firstName:
+   343→          type: string
+   344→        lastName:
+   345→          type: string
+   346→        role:
+   347→          type: string
+   348→          enum: [admin, user, editor, viewer]
+   349→`;
+   350→
+   351→// ---- Main Component ----
+   352→
+   353→export default function OpenApiMock() {
+   354→  // State
+   355→  const [specs, setSpecs] = useState<SpecSummary[]>([]);
+   356→  const [selectedSpec, setSelectedSpec] = useState<SpecDetail | null>(null);
+   357→  const [specName, setSpecName] = useState('');
+   358→  const [specContent, setSpecContent] = useState('');
+   359→  const [loadingSpecs, setLoadingSpecs] = useState(true);
+   360→  const [uploading, setUploading] = useState(false);
+   361→  const [mocking, setMocking] = useState<string | null>(null);
+   362→  const [mockResponse, setMockResponse] = useState<MockResponse | null>(null);
+   363→  const [requestLog, setRequestLog] = useState<RequestLogEntry[]>([]);
+   364→  const [error, setError] = useState<string | null>(null);
+   365→  const [isDragOver, setIsDragOver] = useState(false);
+   366→  const [copiedId, setCopiedId] = useState<string | null>(null);
+   367→  const [activeView, setActiveView] = useState<'upload' | 'specs' | 'detail'>('upload');
+   368→  const [expandedEndpoint, setExpandedEndpoint] = useState<string | null>(null);
+   369→  const fileInputRef = useRef<HTMLInputElement>(null);
+   370→
+   371→  // Fetch specs on mount
+   372→  const fetchSpecs = useCallback(async () => {
+   373→    setLoadingSpecs(true);
+   374→    try {
+   375→      const res = await fetch('/api/openapi/specs');
+   376→      const data = await res.json();
+   377→      setSpecs(data);
+   378→    } catch {
+   379→      setError('Failed to fetch specs');
+   380→    } finally {
+   381→      setLoadingSpecs(false);
+   382→    }
+   383→  }, []);
+   384→
+   385→  useEffect(() => {
+   386→    fetchSpecs();
+   387→  }, [fetchSpecs]);
+   388→
+   389→  // Upload spec
+   390→  const handleUpload = async () => {
+   391→    if (!specName.trim() || !specContent.trim()) {
+   392→      setError('Name and content are required');
+   393→      return;
+   394→    }
+   395→
+   396→    setUploading(true);
+   397→    setError(null);
+   398→
+   399→    try {
+   400→      const res = await fetch('/api/openapi/specs', {
+   401→        method: 'POST',
+   402→        headers: { 'Content-Type': 'application/json' },
+   403→        body: JSON.stringify({ name: specName.trim(), content: specContent.trim() }),
+   404→      });
+   405→
+   406→      const data = await res.json();
+   407→
+   408→      if (!res.ok) {
+   409→        setError(data.error || 'Failed to upload spec');
+   410→        return;
+   411→      }
+   412→
+   413→      setSpecName('');
+   414→      setSpecContent('');
+   415→      await fetchSpecs();
+   416→
+   417→      // Auto-select the newly uploaded spec
+   418→      await handleSelectSpec(data.id);
+   419→    } catch {
+   420→      setError('Failed to upload spec');
+   421→    } finally {
+   422→      setUploading(false);
+   423→    }
+   424→  };
+   425→
+   426→  // Load sample spec
+   427→  const loadSample = () => {
+   428→    setSpecName('Pet Store API');
+   429→    setSpecContent(SAMPLE_SPEC);
+   430→    setActiveView('upload');
+   431→  };
+   432→
+   433→  // Select a spec
+   434→  const handleSelectSpec = async (id: string) => {
+   435→    setMockResponse(null);
+   436→    setExpandedEndpoint(null);
+   437→    try {
+   438→      const res = await fetch(`/api/openapi/specs/${id}`);
+   439→      const data = await res.json();
+   440→
+   441→      if (!res.ok) {
+   442→        setError(data.error || 'Failed to load spec');
+   443→        return;
+   444→      }
+   445→
+   446→      setSelectedSpec(data);
+   447→      setActiveView('detail');
+   448→    } catch {
+   449→      setError('Failed to load spec');
+   450→    }
+   451→  };
+   452→
+   453→  // Delete a spec
+   454→  const handleDelete = async (id: string, e: React.MouseEvent) => {
+   455→    e.stopPropagation();
+   456→    try {
+   457→      await fetch(`/api/openapi/specs/${id}`, { method: 'DELETE' });
+   458→      if (selectedSpec?.id === id) {
+   459→        setSelectedSpec(null);
+   460→        setMockResponse(null);
+   461→        setActiveView('specs');
+   462→      }
+   463→      await fetchSpecs();
+   464→    } catch {
+   465→      setError('Failed to delete spec');
+   466→    }
+   467→  };
+   468→
+   469→  // Test/mock an endpoint
+   470→  const handleMock = async (endpoint: Endpoint) => {
+   471→    if (!selectedSpec) return;
+   472→
+   473→    const endpointKey = `${endpoint.method}:${endpoint.path}`;
+   474→    setMocking(endpointKey);
+   475→    setExpandedEndpoint(endpointKey);
+   476→
+   477→    const startTime = Date.now();
+   478→
+   479→    try {
+   480→      const res = await fetch(`/api/openapi/mock/${selectedSpec.id}`, {
+   481→        method: 'POST',
+   482→        headers: { 'Content-Type': 'application/json' },
+   483→        body: JSON.stringify({ method: endpoint.method, path: endpoint.path }),
+   484→      });
+   485→
+   486→      const data = await res.json();
+   487→      const duration = Date.now() - startTime;
+   488→
+   489→      if (!res.ok) {
+   490→        setError(data.error || 'Failed to generate mock');
+   491→        setMocking(null);
+   492→        return;
+   493→      }
+   494→
+   495→      setMockResponse(data);
+   496→      setError(null);
+   497→
+   498→      // Add to request log
+   499→      const logEntry: RequestLogEntry = {
+   500→        id: crypto.randomUUID(),
+   501→        specId: selectedSpec.id,
+   502→        specName: selectedSpec.name,
+   503→        method: endpoint.method,
+   504→        path: endpoint.path,
+   505→        statusCode: data.statusCode,
+   506→        timestamp: new Date().toISOString(),
+   507→        duration,
+   508→      };
+   509→      setRequestLog(prev => [logEntry, ...prev].slice(0, 50));
+   510→    } catch {
+   511→      setError('Failed to generate mock response');
+   512→    } finally {
+   513→      setMocking(null);
+   514→    }
+   515→  };
+   516→
+   517→  // File handling
+   518→  const handleFile = (file: File) => {
+   519→    const reader = new FileReader();
+   520→    reader.onload = (e) => {
+   521→      const content = e.target?.result as string;
+   522→      setSpecContent(content);
+   523→      if (!specName) {
+   524→        setSpecName(file.name.replace(/\.(yaml|yml|json)$/, ''));
+   525→      }
+   526→      setActiveView('upload');
+   527→    };
+   528→    reader.readAsText(file);
+   529→  };
+   530→
+   531→  const handleDrop = (e: React.DragEvent) => {
+   532→    e.preventDefault();
+   533→    setIsDragOver(false);
+   534→    const file = e.dataTransfer.files[0];
+   535→    if (file) handleFile(file);
+   536→  };
+   537→
+   538→  const handleDragOver = (e: React.DragEvent) => {
+   539→    e.preventDefault();
+   540→    setIsDragOver(true);
+   541→  };
+   542→
+   543→  const handleDragLeave = () => {
+   544→    setIsDragOver(false);
+   545→  };
+   546→
+   547→  const copyToClipboard = (text: string, id: string) => {
+   548→    navigator.clipboard.writeText(text);
+   549→    setCopiedId(id);
+   550→    setTimeout(() => setCopiedId(null), 1500);
+   551→  };
+   552→
+   553→  // Group endpoints by tag
+   554→  const getGroupedEndpoints = () => {
+   555→    if (!selectedSpec?.endpoints) return {};
+   556→    const groups: Record<string, Endpoint[]> = {};
+   557→    for (const ep of selectedSpec.endpoints) {
+   558→      const tag = ep.tags?.[0] || 'Default';
+   559→      if (!groups[tag]) groups[tag] = [];
+   560→      groups[tag].push(ep);
+   561→    }
+   562→    return groups;
+   563→  };
+   564→
+   565→  const groupedEndpoints = getGroupedEndpoints();
+   566→
+   567→  return (
+   568→    <WorkspaceLayout>
+   569→      <div className="flex flex-col gap-6">
+   570→        {/* Error toast */}
+   571→        <AnimatePresence>
+   572→          {error && (
+   573→            <motion.div
+   574→              initial={{ opacity: 0, y: -8 }}
+   575→              animate={{ opacity: 1, y: 0 }}
+   576→              exit={{ opacity: 0, y: -8 }}
+   577→              className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+   578→            >
+   579→              <span>{error}</span>
+   580→              <button onClick={() => setError(null)} className="shrink-0 hover:text-red-300">
+   581→                <X className="w-4 h-4" />
+   582→              </button>
+   583→            </motion.div>
+   584→          )}
+   585→        </AnimatePresence>
+   586→
+   587→        {/* Upload View */}
+   588→        <AnimatePresence mode="wait">
+   589→          {activeView === 'upload' && (
+   590→            <motion.div
+   591→              key="upload"
+   592→              initial={{ opacity: 0, y: 12 }}
+   593→              animate={{ opacity: 1, y: 0 }}
+   594→              exit={{ opacity: 0, y: -8 }}
+   595→              className="flex flex-col gap-6"
+   596→            >
+   597→              <GradientBorder color="cyan">
+   598→                <GlassCard className="p-6">
+   599→                  <div className="flex items-center gap-2 mb-4">
+   600→                    <FileCode className="w-5 h-5 text-[#22d3ee]" />
+   601→                    <h2 className="text-sm font-medium text-[#f0f0f5]">Upload OpenAPI Spec</h2>
+   602→                  </div>
+   603→
+   604→                  {/* Name input */}
+   605→                  <div className="mb-4">
+   606→                    <label className="block text-xs text-[#55556a] mb-1.5 font-medium">Spec Name</label>
+   607→                    <AnimatedInput
+   608→                      placeholder="e.g., Pet Store API"
+   609→                      value={specName}
+   610→                      onChange={(e) => setSpecName(e.target.value)}
+   611→                      icon={<FileText className="w-4 h-4" />}
+   612→                    />
+   613→                  </div>
+   614→
+   615→                  {/* Textarea for spec content */}
+   616→                  <div className="mb-4">
+   617→                    <div className="flex items-center justify-between mb-1.5">
+   618→                      <label className="text-xs text-[#55556a] font-medium">Spec Content (YAML or JSON)</label>
+   619→                      <button
+   620→                        onClick={loadSample}
+   621→                        className="text-xs text-[#22d3ee] hover:text-[#67e8f9] transition-colors flex items-center gap-1"
+   622→                      >
+   623→                        <Zap className="w-3 h-3" />
+   624→                        Load sample
+   625→                      </button>
+   626→                    </div>
+   627→                    <AnimatedTextarea
+   628→                      placeholder="Paste your OpenAPI 3.0 or Swagger 2.0 spec here..."
+   629→                      value={specContent}
+   630→                      onChange={(e) => setSpecContent(e.target.value)}
+   631→                      size="lg"
+   632→                      className="min-h-[260px] font-mono text-xs"
+   633→                    />
+   634→                  </div>
+   635→
+   636→                  {/* Drop zone */}
+   637→                  <div
+   638→                    onDrop={handleDrop}
+   639→                    onDragOver={handleDragOver}
+   640→                    onDragLeave={handleDragLeave}
+   641→                    className={`relative mb-4 flex flex-col items-center justify-center gap-2 py-8 rounded-lg border-2 border-dashed transition-colors cursor-pointer ${
+   642→                      isDragOver
+   643→                        ? 'border-[#22d3ee]/50 bg-[#22d3ee]/5'
+   644→                        : 'border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.15)]'
+   645→                    }`}
+   646→                    onClick={() => fileInputRef.current?.click()}
+   647→                  >
+   648→                    <input
+   649→                      ref={fileInputRef}
+   650→                      type="file"
+   651→                      accept=".yaml,.yml,.json"
+   652→                      className="hidden"
+   653→                      onChange={(e) => {
+   654→                        const file = e.target.files?.[0];
+   655→                        if (file) handleFile(file);
+   656→                        e.target.value = '';
+   657→                      }}
+   658→                    />
+   659→                    <FileUp className={`w-6 h-6 ${isDragOver ? 'text-[#22d3ee]' : 'text-[#55556a]'}`} />
+   660→                    <p className="text-xs text-[#55556a]">
+   661→                      {isDragOver ? 'Drop your file here' : 'Or drag & drop a .yaml / .json file'}
+   662→                    </p>
+   663→                  </div>
+   664→
+   665→                  {/* Actions */}
+   666→                  <div className="flex items-center justify-between">
+   667→                    <button
+   668→                      onClick={() => setActiveView('specs')}
+   669→                      className="text-sm text-[#55556a] hover:text-[#8888a0] transition-colors"
+   670→                    >
+   671→                      ← Back to specs
+   672→                    </button>
+   673→                    <GlowButton
+   674→                      onClick={handleUpload}
+   675→                      disabled={!specName.trim() || !specContent.trim() || uploading}
+   676→                      size="lg"
+   677→                    >
+   678→                      {uploading ? (
+   679→                        <>
+   680→                          <RefreshCw className="w-4 h-4 animate-spin" />
+   681→                          Parsing...
+   682→                        </>
+   683→                      ) : (
+   684→                        <>
+   685→                          <Upload className="w-4 h-4" />
+   686→                          Upload & Parse
+   687→                        </>
+   688→                      )}
+   689→                    </GlowButton>
+   690→                  </div>
+   691→                </GlassCard>
+   692→              </GradientBorder>
+   693→            </motion.div>
+   694→          )}
+   695→
+   696→          {/* Specs List View */}
+   697→          {activeView === 'specs' && (
+   698→            <motion.div
+   699→              key="specs"
+   700→              initial={{ opacity: 0, y: 12 }}
+   701→              animate={{ opacity: 1, y: 0 }}
+   702→              exit={{ opacity: 0, y: -8 }}
+   703→              className="flex flex-col gap-6"
+   704→            >
+   705→              {/* Header actions */}
+   706→              <div className="flex items-center justify-between">
+   707→                <div className="flex items-center gap-2">
+   708→                  <h2 className="text-sm font-medium text-[#8888a0]">Your Specs</h2>
+   709→                  {specs.length > 0 && (
+   710→                    <ForgeBadge variant="cyan">{specs.length}</ForgeBadge>
+   711→                  )}
+   712→                </div>
+   713→                <div className="flex items-center gap-2">
+   714→                  <GlowButton variant="ghost" size="sm" onClick={loadSample}>
+   715→                    <Zap className="w-3.5 h-3.5" />
+   716→                    Load Sample
+   717→                  </GlowButton>
+   718→                  <GlowButton size="sm" onClick={() => setActiveView('upload')}>
+   719→                    <Upload className="w-3.5 h-3.5" />
+   720→                    Upload Spec
+   721→                  </GlowButton>
+   722→                </div>
+   723→              </div>
+   724→
+   725→              {/* Loading */}
+   726→              {loadingSpecs && (
+   727→                <div className="space-y-3">
+   728→                  <ShimmerCard />
+   729→                  <ShimmerCard />
+   730→                </div>
+   731→              )}
+   732→
+   733→              {/* Empty state */}
+   734→              {!loadingSpecs && specs.length === 0 && (
+   735→                <EmptyState
+   736→                  icon={<Server className="w-12 h-12" />}
+   737→                  title="No specs uploaded yet"
+   738→                  description="Upload an OpenAPI spec to start generating mock endpoints with realistic fake data."
+   739→                  action={
+   740→                    <div className="flex items-center gap-2">
+   741→                      <GlowButton variant="secondary" onClick={loadSample}>
+   742→                        <Zap className="w-4 h-4" />
+   743→                        Try Sample Spec
+   744→                      </GlowButton>
+   745→                      <GlowButton onClick={() => setActiveView('upload')}>
+   746→                        <Upload className="w-4 h-4" />
+   747→                        Upload Spec
+   748→                      </GlowButton>
+   749→                    </div>
+   750→                  }
+   751→                />
+   752→              )}
+   753→
+   754→              {/* Spec cards */}
+   755→              {!loadingSpecs && specs.length > 0 && (
+   756→                <div className="grid gap-3">
+   757→                  {specs.map((spec, i) => (
+   758→                    <motion.div
+   759→                      key={spec.id}
+   760→                      initial={{ opacity: 0, y: 8 }}
+   761→                      animate={{ opacity: 1, y: 0 }}
+   762→                      transition={{ delay: i * 0.05 }}
+   763→                    >
+   764→                      <GlassCard
+   765→                        hover
+   766→                        glow="cyan"
+   767→                        onClick={() => handleSelectSpec(spec.id)}
+   768→                        className="p-4 flex items-center justify-between gap-4"
+   769→                      >
+   770→                        <div className="flex items-center gap-3 min-w-0 flex-1">
+   771→                          <div className="w-10 h-10 rounded-lg bg-[rgba(6,182,212,0.1)] border border-[rgba(6,182,212,0.2)] flex items-center justify-center shrink-0">
+   772→                            <FileCode className="w-5 h-5 text-[#22d3ee]" />
+   773→                          </div>
+   774→                          <div className="min-w-0">
+   775→                            <h3 className="text-sm font-medium text-[#f0f0f5] truncate">{spec.name}</h3>
+   776→                            <div className="flex items-center gap-2 mt-1">
+   777→                              <ForgeBadge variant="default">
+   778→                                <Layers className="w-3 h-3" />
+   779→                                {spec.endpointCount} endpoints
+   780→                              </ForgeBadge>
+   781→                              <span className="text-xs text-[#44445a]">
+   782→                                {new Date(spec.createdAt).toLocaleDateString()}
+   783→                              </span>
+   784→                            </div>
+   785→                          </div>
+   786→                        </div>
+   787→                        <div className="flex items-center gap-2 shrink-0">
+   788→                          <GlowButton
+   789→                            variant="ghost"
+   790→                            size="icon"
+   791→                            className="h-8 w-8 text-[#55556a] hover:text-red-400"
+   792→                            onClick={(e) => handleDelete(spec.id, e)}
+   793→                          >
+   794→                            <Trash2 className="w-4 h-4" />
+   795→                          </GlowButton>
+   796→                          <ChevronRight className="w-4 h-4 text-[#44445a]" />
+   797→                        </div>
+   798→                      </GlassCard>
+   799→                    </motion.div>
+   800→                  ))}
+   801→                </div>
+   802→              )}
+   803→            </motion.div>
+   804→          )}
+   805→
+   806→          {/* Spec Detail View */}
+   807→          {activeView === 'detail' && selectedSpec && (
+   808→            <motion.div
+   809→              key="detail"
+   810→              initial={{ opacity: 0, y: 12 }}
+   811→              animate={{ opacity: 1, y: 0 }}
+   812→              exit={{ opacity: 0, y: -8 }}
+   813→              className="flex flex-col gap-6"
+   814→            >
+   815→              {/* Spec info header */}
+   816→              <GlassCard className="p-5">
+   817→                <div className="flex items-start justify-between gap-4">
+   818→                  <div className="flex items-start gap-3">
+   819→                    <div className="w-10 h-10 rounded-lg bg-[rgba(6,182,212,0.1)] border border-[rgba(6,182,212,0.2)] flex items-center justify-center shrink-0 mt-0.5">
+   820→                      <FileCode className="w-5 h-5 text-[#22d3ee]" />
+   821→                    </div>
+   822→                    <div>
+   823→                      <h2 className="text-base font-semibold text-[#f0f0f5]">{selectedSpec.name}</h2>
+   824→                      {selectedSpec.info?.title && selectedSpec.info.title !== selectedSpec.name && (
+   825→                        <p className="text-sm text-[#8888a0] mt-0.5">{selectedSpec.info.title}</p>
+   826→                      )}
+   827→                      {selectedSpec.info?.description && (
+   828→                        <p className="text-xs text-[#55556a] mt-1 max-w-xl">{selectedSpec.info.description}</p>
+   829→                      )}
+   830→                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+   831→                        {selectedSpec.openApiVersion && (
+   832→                          <ForgeBadge variant="cyan">v{selectedSpec.openApiVersion}</ForgeBadge>
+   833→                        )}
+   834→                        <ForgeBadge variant="default">
+   835→                          <List className="w-3 h-3" />
+   836→                          {selectedSpec.endpoints.length} endpoints
+   837→                        </ForgeBadge>
+   838→                        {selectedSpec.info?.version && (
+   839→                          <ForgeBadge variant="purple">API v{selectedSpec.info.version}</ForgeBadge>
+   840→                        )}
+   841→                      </div>
+   842→                    </div>
+   843→                  </div>
+   844→                  <div className="flex items-center gap-2 shrink-0">
+   845→                    <GlowButton
+   846→                      variant="ghost"
+   847→                      size="sm"
+   848→                      onClick={() => {
+   849→                        copyToClipboard(selectedSpec.id, 'spec-id');
+   850→                      }}
+   851→                    >
+   852→                      <Link2 className="w-3.5 h-3.5" />
+   853→                      {copiedId === 'spec-id' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+   854→                    </GlowButton>
+   855→                    <GlowButton
+   856→                      variant="secondary"
+   857→                      size="sm"
+   858→                      onClick={() => setActiveView('upload')}
+   859→                    >
+   860→                      <Upload className="w-3.5 h-3.5" />
+   861→                      New
+   862→                    </GlowButton>
+   863→                  </div>
+   864→                </div>
+   865→              </GlassCard>
+   866→
+   867→              {/* Tabs: Endpoints | Mock Response | Request Log */}
+   868→              <Tabs defaultValue="endpoints" className="w-full">
+   869→                <TabsList className="bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)]">
+   870→                  <TabsTrigger value="endpoints" className="text-xs gap-1.5 data-[state=active]:text-[#22d3ee] data-[state=active]:bg-[rgba(6,182,212,0.08)]">
+   871→                    <List className="w-3.5 h-3.5" />
+   872→                    Endpoints
+   873→                  </TabsTrigger>
+   874→                  <TabsTrigger value="response" className="text-xs gap-1.5 data-[state=active]:text-[#22d3ee] data-[state=active]:bg-[rgba(6,182,212,0.08)]">
+   875→                    <Send className="w-3.5 h-3.5" />
+   876→                    Mock Response
+   877→                    {mockResponse && (
+   878→                      <span className="w-1.5 h-1.5 rounded-full bg-[#22d3ee]" />
+   879→                    )}
+   880→                  </TabsTrigger>
+   881→                  <TabsTrigger value="log" className="text-xs gap-1.5 data-[state=active]:text-[#22d3ee] data-[state=active]:bg-[rgba(6,182,212,0.08)]">
+   882→                    <Clock className="w-3.5 h-3.5" />
+   883→                    History
+   884→                    {requestLog.length > 0 && (
+   885→                      <ForgeBadge variant="cyan" className="ml-1">{requestLog.length}</ForgeBadge>
+   886→                    )}
+   887→                  </TabsTrigger>
+   888→                </TabsList>
+   889→
+   890→                {/* Endpoints Tab */}
+   891→                <TabsContent value="endpoints">
+   892→                  <ScrollArea className="max-h-[60vh]">
+   893→                    <div className="flex flex-col gap-4 pr-4">
+   894→                      {Object.entries(groupedEndpoints).map(([tag, endpoints]) => (
+   895→                        <div key={tag}>
+   896→                          <h3 className="text-xs font-medium text-[#55556a] uppercase tracking-wider mb-2 flex items-center gap-2">
+   897→                            <div className="w-1.5 h-1.5 rounded-full bg-[#22d3ee]/50" />
+   898→                            {tag}
+   899→                            <ForgeBadge variant="default">{endpoints.length}</ForgeBadge>
+   900→                          </h3>
+   901→                          <div className="flex flex-col gap-2">
+   902→                            {endpoints.map((ep) => {
+   903→                              const key = `${ep.method}:${ep.path}`;
+   904→                              const isExpanded = expandedEndpoint === key;
+   905→                              const isLoading = mocking === key;
+   906→
+   907→                              return (
+   908→                                <motion.div key={key}>
+   909→                                  <GlassCard
+   910→                                    hover
+   911→                                    glow="none"
+   912→                                    className={`p-3 transition-all ${
+   913→                                      isExpanded ? 'border-[rgba(6,182,212,0.2)]' : ''
+   914→                                    }`}
+   915→                                    onClick={() => {
+   916→                                      if (!isExpanded) handleMock(ep);
+   917→                                    }}
+   918→                                  >
+   919→                                    <div className="flex items-center justify-between gap-3">
+   920→                                      <div className="flex items-center gap-3 min-w-0 flex-1">
+   921→                                        <MethodBadge method={ep.method} />
+   922→                                        <code className="text-sm text-[#c0c0d0] font-mono truncate">
+   923→                                          {ep.path}
+   924→                                        </code>
+   925→                                      </div>
+   926→                                      <div className="flex items-center gap-2 shrink-0">
+   927→                                        {ep.summary && (
+   928→                                          <span className="text-xs text-[#55556a] hidden sm:block max-w-[200px] truncate">
+   929→                                            {ep.summary}
+   930→                                          </span>
+   931→                                        )}
+   932→                                        {isLoading ? (
+   933→                                          <div className="w-6 h-6 flex items-center justify-center">
+   934→                                            <RefreshCw className="w-4 h-4 animate-spin text-[#22d3ee]" />
+   935→                                          </div>
+   936→                                        ) : (
+   937→                                          <GlowButton
+   938→                                            variant="ghost"
+   939→                                            size="sm"
+   940→                                            className="h-7 text-xs gap-1 text-[#22d3ee] hover:text-[#67e8f9]"
+   941→                                          >
+   942→                                            <Play className="w-3 h-3" />
+   943→                                            Mock
+   944→                                          </GlowButton>
+   945→                                        )}
+   946→                                      </div>
+   947→                                    </div>
+   948→                                    {ep.summary && (
+   949→                                      <p className="text-xs text-[#55556a] mt-1.5 ml-[68px] sm:hidden">
+   950→                                        {ep.summary}
+   951→                                      </p>
+   952→                                    )}
+   953→                                  </GlassCard>
+   954→                                </motion.div>
+   955→                              );
+   956→                            })}
+   957→                          </div>
+   958→                        </div>
+   959→                      ))}
+   960→                    </div>
+   961→                  </ScrollArea>
+   962→                </TabsContent>
+   963→
+   964→                {/* Mock Response Tab */}
+   965→                <TabsContent value="response">
+   966→                  <AnimatePresence mode="wait">
+   967→                    {mockResponse ? (
+   968→                      <motion.div
+   969→                        key="response"
+   970→                        initial={{ opacity: 0, y: 8 }}
+   971→                        animate={{ opacity: 1, y: 0 }}
+   972→                        exit={{ opacity: 0 }}
+   973→                        className="flex flex-col gap-4"
+   974→                      >
+   975→                        {/* Response meta */}
+   976→                        <GlassCard className="p-4">
+   977→                          <div className="flex items-center justify-between mb-3">
+   978→                            <div className="flex items-center gap-2">
+   979→                              <MethodBadge method={mockResponse.meta.method} />
+   980→                              <code className="text-sm text-[#c0c0d0] font-mono">{mockResponse.meta.endpoint}</code>
+   981→                              <StatusBadge status={mockResponse.statusCode} />
+   982→                            </div>
+   983→                            <div className="flex items-center gap-2">
+   984→                              {mockResponse.meta.summary && (
+   985→                                <span className="text-xs text-[#55556a] hidden md:block">{mockResponse.meta.summary}</span>
+   986→                              )}
+   987→                              <GlowButton
+   988→                                variant="ghost"
+   989→                                size="sm"
+   990→                                onClick={() => {
+   991→                                  copyToClipboard(JSON.stringify(mockResponse.body, null, 2), 'mock-response');
+   992→                                }}
+   993→                              >
+   994→                                {copiedId === 'mock-response' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+   995→                                Copy
+   996→                              </GlowButton>
+   997→                            </div>
+   998→                          </div>
+   999→
+  1000→                          {/* Headers */}
+  1001→                          <div className="mb-3">
+  1002→                            <h4 className="text-xs font-medium text-[#55556a] mb-1.5">Response Headers</h4>
+  1003→                            <div className="flex flex-wrap gap-2">
+  1004→                              {Object.entries(mockResponse.headers).map(([key, value]) => (
+  1005→                                <ForgeBadge key={key} variant="default" className="font-mono text-[10px]">
+  1006→                                  {key}: {value}
+  1007→                                </ForgeBadge>
+  1008→                              ))}
+  1009→                            </div>
+  1010→                          </div>
+  1011→                        </GlassCard>
+  1012→
+  1013→                        {/* Response body */}
+  1014→                        <CodeViewer
+  1015→                          code={JSON.stringify(mockResponse.body, null, 2)}
+  1016→                          language="json"
+  1017→                          filename="response.json"
+  1018→                          className="max-h-[50vh]"
+  1019→                        />
+  1020→                      </motion.div>
+  1021→                    ) : (
+  1022→                      <motion.div
+  1023→                        key="empty"
+  1024→                        initial={{ opacity: 0 }}
+  1025→                        animate={{ opacity: 1 }}
+  1026→                        exit={{ opacity: 0 }}
+  1027→                      >
+  1028→                        <EmptyState
+  1029→                          icon={<Send className="w-10 h-10" />}
+  1030→                          title="No mock response yet"
+  1031→                          description="Click the Mock button on any endpoint to generate a realistic fake response based on the schema."
+  1032→                          action={
+  1033→                            <GlowButton variant="secondary" size="sm" onClick={() => {}}>
+  1034→                              <ArrowRight className="w-4 h-4" />
+  1035→                              Select an endpoint above
+  1036→                            </GlowButton>
+  1037→                          }
+  1038→                        />
+  1039→                      </motion.div>
+  1040→                    )}
+  1041→                  </AnimatePresence>
+  1042→                </TabsContent>
+  1043→
+  1044→                {/* Request Log Tab */}
+  1045→                <TabsContent value="log">
+  1046→                  {requestLog.length === 0 ? (
+  1047→                    <EmptyState
+  1048→                      icon={<Clock className="w-10 h-10" />}
+  1049→                      title="No requests logged"
+  1050→                      description="Mock requests will appear here as you test endpoints."
+  1051→                    />
+  1052→                  ) : (
+  1053→                    <ScrollArea className="max-h-[60vh]">
+  1054→                      <div className="flex flex-col gap-1 pr-4">
+  1055→                        {requestLog.map((entry, i) => (
+  1056→                          <motion.div
+  1057→                            key={entry.id}
+  1058→                            initial={{ opacity: 0, x: -8 }}
+  1059→                            animate={{ opacity: 1, x: 0 }}
+  1060→                            transition={{ delay: i * 0.03 }}
+  1061→                            className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-[rgba(255,255,255,0.02)] transition-colors group"
+  1062→                          >
+  1063→                            <div className="flex items-center gap-2 min-w-0 flex-1">
+  1064→                              <MethodBadge method={entry.method} />
+  1065→                              <code className="text-xs text-[#8888a0] font-mono truncate">{entry.path}</code>
+  1066→                            </div>
+  1067→                            <div className="flex items-center gap-3 shrink-0">
+  1068→                              <StatusBadge status={entry.statusCode} />
+  1069→                              <span className="text-xs text-[#44445a] w-16 text-right">{entry.duration}ms</span>
+  1070→                              <span className="text-xs text-[#44445a] w-20 text-right hidden sm:block">
+  1071→                                {new Date(entry.timestamp).toLocaleTimeString()}
+  1072→                              </span>
+  1073→                            </div>
+  1074→                          </motion.div>
+  1075→                        ))}
+  1076→                      </div>
+  1077→                    </ScrollArea>
+  1078→                  )}
+  1079→                </TabsContent>
+  1080→              </Tabs>
+  1081→            </motion.div>
+  1082→          )}
+  1083→        </AnimatePresence>
+  1084→      </div>
+  1085→    </WorkspaceLayout>
+  1086→  );
+  1087→}

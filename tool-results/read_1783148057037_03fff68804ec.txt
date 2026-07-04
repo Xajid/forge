@@ -1,0 +1,993 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useCallback } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
+     6→import { GlassCard } from '@/components/forge/GlassCard';
+     7→import { GlowButton } from '@/components/forge/GlowButton';
+     8→import { AnimatedInput } from '@/components/forge/AnimatedInput';
+     9→import { ForgeBadge } from '@/components/forge/ForgeBadge';
+    10→import { ShimmerCard } from '@/components/forge/Shimmer';
+    11→import { EmptyState } from '@/components/forge/EmptyState';
+    12→import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+    13→import { ScrollArea } from '@/components/ui/scroll-area';
+    14→import {
+    15→  Table,
+    16→  TableHeader,
+    17→  TableBody,
+    18→  TableHead,
+    19→  TableRow,
+    20→  TableCell,
+    21→} from '@/components/ui/table';
+    22→import { Label } from '@/components/ui/label';
+    23→import {
+    24→  BarChart,
+    25→  Bar,
+    26→  XAxis,
+    27→  YAxis,
+    28→  CartesianGrid,
+    29→  Tooltip as RechartsTooltip,
+    30→  ResponsiveContainer,
+    31→  PieChart,
+    32→  Pie,
+    33→  Cell,
+    34→  Legend,
+    35→} from 'recharts';
+    36→import ReactMarkdown from 'react-markdown';
+    37→import {
+    38→  Flame,
+    39→  Zap,
+    40→  Database,
+    41→  HardDrive,
+    42→  Shield,
+    43→  Globe,
+    44→  Server,
+    45→  TrendingDown,
+    46→  DollarSign,
+    47→  BarChart3,
+    48→  History,
+    49→  Trash2,
+    50→  Eye,
+    51→  Loader2,
+    52→  Sparkles,
+    53→  ArrowRight,
+    54→  AlertTriangle,
+    55→} from 'lucide-react';
+    56→
+    57→// ── Types ───────────────────────────────────────────────────────────────────
+    58→
+    59→interface FormData {
+    60→  name: string;
+    61→  period: string;
+    62→  firestore: { reads: number; writes: number; deletes: number };
+    63→  storage: { storedGB: number; downloadGB: number; uploadGB: number };
+    64→  auth: { monthlyActiveUsers: number };
+    65→  hosting: { transferGB: number; functionInvocations: number; functionComputeGBs: number };
+    66→}
+    67→
+    68→interface CostLineItem {
+    69→  service: string;
+    70→  metric: string;
+    71→  usage: number;
+    72→  unit: string;
+    73→  unitCost: number;
+    74→  totalCost: number;
+    75→  freeTierUsage?: number;
+    76→  billableUsage?: number;
+    77→}
+    78→
+    79→interface CostByService {
+    80→  name: string;
+    81→  cost: number;
+    82→}
+    83→
+    84→interface TopDriver {
+    85→  service: string;
+    86→  metric: string;
+    87→  cost: number;
+    88→}
+    89→
+    90→interface AnalysisResult {
+    91→  id: string;
+    92→  name: string;
+    93→  createdAt: string;
+    94→  analysis: {
+    95→    items: CostLineItem[];
+    96→    total: number;
+    97→    costByService: CostByService[];
+    98→    topDriver: TopDriver;
+    99→    estimatedSavingsLow: number;
+   100→    estimatedSavingsHigh: number;
+   101→  };
+   102→  recommendations: string;
+   103→}
+   104→
+   105→interface ReportListItem {
+   106→  id: string;
+   107→  name: string;
+   108→  createdAt: string;
+   109→  totalCost: number | null;
+   110→  period: string | null;
+   111→}
+   112→
+   113→interface ViewReportData {
+   114→  id: string;
+   115→  name: string;
+   116→  createdAt: string;
+   117→  recommendations: string;
+   118→  analysis: {
+   119→    items: CostLineItem[];
+   120→    total: number;
+   121→    costByService: CostByService[];
+   122→    topDriver: TopDriver;
+   123→    estimatedSavingsLow: number;
+   124→    estimatedSavingsHigh: number;
+   125→  } | null;
+   126→  inputData: {
+   127→    name: string;
+   128→    period?: string;
+   129→    firestore: { reads: number; writes: number; deletes: number };
+   130→    storage: { storedGB: number; downloadGB: number; uploadGB: number };
+   131→    auth: { monthlyActiveUsers: number };
+   132→    hosting: { transferGB: number; functionInvocations: number; functionComputeGBs: number };
+   133→  };
+   134→}
+   135→
+   136→// ── Chart colors ────────────────────────────────────────────────────────────
+   137→
+   138→const CHART_COLORS = ['#8b5cf6', '#3b82f6', '#06b6d4', '#a78bfa', '#60a5fa'];
+   139→const SERVICE_COLOR_MAP: Record<string, string> = {
+   140→  Firestore: '#8b5cf6',
+   141→  'Cloud Storage': '#3b82f6',
+   142→  Authentication: '#06b6d4',
+   143→  Hosting: '#a78bfa',
+   144→  'Cloud Functions': '#60a5fa',
+   145→};
+   146→
+   147→// ── Formatters ──────────────────────────────────────────────────────────────
+   148→
+   149→function formatCurrency(n: number): string {
+   150→  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+   151→}
+   152→
+   153→function formatNumber(n: number): string {
+   154→  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+   155→  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+   156→  return n.toLocaleString();
+   157→}
+   158→
+   159→function formatDate(iso: string): string {
+   160→  return new Date(iso).toLocaleDateString('en-US', {
+   161→    month: 'short',
+   162→    day: 'numeric',
+   163→    year: 'numeric',
+   164→    hour: '2-digit',
+   165→    minute: '2-digit',
+   166→  });
+   167→}
+   168→
+   169→// ── Empty form data ─────────────────────────────────────────────────────────
+   170→
+   171→const emptyForm: FormData = {
+   172→  name: '',
+   173→  period: new Date().toISOString().slice(0, 7),
+   174→  firestore: { reads: 0, writes: 0, deletes: 0 },
+   175→  storage: { storedGB: 0, downloadGB: 0, uploadGB: 0 },
+   176→  auth: { monthlyActiveUsers: 0 },
+   177→  hosting: { transferGB: 0, functionInvocations: 0, functionComputeGBs: 0 },
+   178→};
+   179→
+   180→// ── Custom Tooltip for charts ───────────────────────────────────────────────
+   181→
+   182→function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) {
+   183→  if (!active || !payload?.length) return null;
+   184→  return (
+   185→    <div className="forge-glass rounded-lg px-3 py-2 border border-[rgba(255,255,255,0.08)] shadow-xl">
+   186→      {label && <p className="text-xs text-[#8888a0] mb-1">{label}</p>}
+   187→      {payload.map((entry, i) => (
+   188→        <p key={i} className="text-xs font-medium" style={{ color: entry.color }}>
+   189→          {entry.name}: {formatCurrency(entry.value)}
+   190→        </p>
+   191→      ))}
+   192→    </div>
+   193→  );
+   194→}
+   195→
+   196→// ── Pie chart label ─────────────────────────────────────────────────────────
+   197→
+   198→function renderCustomLabel({ name, percent }: { name: string; percent: number }) {
+   199→  return `${name} ${(percent * 100).toFixed(0)}%`;
+   200→}
+   201→
+   202→// ── Component ───────────────────────────────────────────────────────────────
+   203→
+   204→export default function FirebaseAnalyzer() {
+   205→  const [activeTab, setActiveTab] = useState('analyze');
+   206→  const [formData, setFormData] = useState<FormData>(emptyForm);
+   207→  const [analyzing, setAnalyzing] = useState(false);
+   208→  const [loadingSample, setLoadingSample] = useState(false);
+   209→  const [result, setResult] = useState<AnalysisResult | null>(null);
+   210→  const [reports, setReports] = useState<ReportListItem[]>([]);
+   211→  const [loadingReports, setLoadingReports] = useState(false);
+   212→  const [viewingReport, setViewingReport] = useState<ViewReportData | null>(null);
+   213→  const [loadingViewReport, setLoadingViewReport] = useState(false);
+   214→
+   215→  // Update a nested field
+   216→  const updateField = useCallback(
+   217→    (section: keyof FormData, field: string, value: string | number) => {
+   218→      setFormData((prev) => ({
+   219→        ...prev,
+   220→        [section]:
+   221→          typeof prev[section] === 'object'
+   222→            ? { ...(prev[section] as Record<string, unknown>), [field]: Number(value) || 0 }
+   223→            : value,
+   224→      }));
+   225→    },
+   226→    []
+   227→  );
+   228→
+   229→  // Load sample data
+   230→  const loadSample = async () => {
+   231→    setLoadingSample(true);
+   232→    try {
+   233→      const res = await fetch('/api/firebase-analyzer/sample-data');
+   234→      const data = await res.json();
+   235→      setFormData((prev) => ({
+   236→        ...prev,
+   237→        name: data.name || prev.name,
+   238→        period: data.period || prev.period,
+   239→        firestore: data.firestore || prev.firestore,
+   240→        storage: data.storage || prev.storage,
+   241→        auth: data.auth || prev.auth,
+   242→        hosting: data.hosting || prev.hosting,
+   243→      }));
+   244→    } catch {
+   245→      // silent
+   246→    } finally {
+   247→      setLoadingSample(false);
+   248→    }
+   249→  };
+   250→
+   251→  // Run analysis
+   252→  const runAnalysis = async () => {
+   253→    if (!formData.name.trim()) return;
+   254→    setAnalyzing(true);
+   255→    setResult(null);
+   256→    try {
+   257→      const res = await fetch('/api/firebase-analyzer/analyze', {
+   258→        method: 'POST',
+   259→        headers: { 'Content-Type': 'application/json' },
+   260→        body: JSON.stringify(formData),
+   261→      });
+   262→      const data = await res.json();
+   263→      if (data.error) {
+   264→        setResult(null);
+   265→        return;
+   266→      }
+   267→      setResult(data);
+   268→      setActiveTab('results');
+   269→    } catch {
+   270→      // silent
+   271→    } finally {
+   272→      setAnalyzing(false);
+   273→    }
+   274→  };
+   275→
+   276→  // Load reports
+   277→  const loadReports = async () => {
+   278→    setLoadingReports(true);
+   279→    try {
+   280→      const res = await fetch('/api/firebase-analyzer/reports');
+   281→      const data = await res.json();
+   282→      setReports(data);
+   283→    } catch {
+   284→      // silent
+   285→    } finally {
+   286→      setLoadingReports(false);
+   287→    }
+   288→  };
+   289→
+   290→  // View a report
+   291→  const viewReport = async (id: string) => {
+   292→    setLoadingViewReport(true);
+   293→    try {
+   294→      const res = await fetch(`/api/firebase-analyzer/reports/${id}`);
+   295→      const data = await res.json();
+   296→      if (data.error) return;
+   297→
+   298→      const reportResult: AnalysisResult = {
+   299→        id: data.id,
+   300→        name: data.name,
+   301→        createdAt: data.createdAt,
+   302→        analysis: data.analysis || {
+   303→          items: [],
+   304→          total: 0,
+   305→          costByService: [],
+   306→          topDriver: { service: 'N/A', metric: 'N/A', cost: 0 },
+   307→          estimatedSavingsLow: 0,
+   308→          estimatedSavingsHigh: 0,
+   309→        },
+   310→        recommendations: data.recommendations || '',
+   311→      };
+   312→      setResult(reportResult);
+   313→      setViewingReport(data);
+   314→      setActiveTab('results');
+   315→    } catch {
+   316→      // silent
+   317→    } finally {
+   318→      setLoadingViewReport(false);
+   319→    }
+   320→  };
+   321→
+   322→  // Delete a report
+   323→  const deleteReport = async (id: string) => {
+   324→    try {
+   325→      await fetch(`/api/firebase-analyzer/reports/${id}`, { method: 'DELETE' });
+   326→      setReports((prev) => prev.filter((r) => r.id !== id));
+   327→    } catch {
+   328→      // silent
+   329→    }
+   330→  };
+   331→
+   332→  // Tab change handler for history
+   333→  const handleTabChange = (value: string) => {
+   334→    setActiveTab(value);
+   335→    if (value === 'history' && reports.length === 0) {
+   336→      loadReports();
+   337→    }
+   338→  };
+   339→
+   340→  // ── Input Field Component ────────────────────────────────────────────────
+   341→  const NumberField = ({
+   342→    label,
+   343→    icon,
+   344→    section,
+   345→    field,
+   346→    placeholder,
+   347→    suffix,
+   348→  }: {
+   349→    label: string;
+   350→    icon: React.ReactNode;
+   351→    section: keyof FormData;
+   352→    field: string;
+   353→    placeholder: string;
+   354→    suffix?: string;
+   355→  }) => (
+   356→    <div className="flex flex-col gap-1.5">
+   357→      <Label className="text-[#8888a0] text-xs">{label}</Label>
+   358→      <div className="relative">
+   359→        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#55556a] pointer-events-none">
+   360→          {icon}
+   361→        </div>
+   362→        <input
+   363→          type="number"
+   364→          min="0"
+   365→          value={
+   366→            (formData[section] as Record<string, number>)?.[field] ?? 0
+   367→          }
+   368→          onChange={(e) => updateField(section, field, e.target.value)}
+   369→          placeholder={placeholder}
+   370→          className="w-full h-9 pl-9 pr-10 rounded-lg bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.06)] text-[#f0f0f5] text-sm placeholder:text-[#44445a] focus:outline-none focus:border-[#8b5cf6]/50 focus:ring-1 focus:ring-[#8b5cf6]/20 transition-all duration-200 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+   371→        />
+   372→        {suffix && (
+   373→          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[#55556a] text-xs pointer-events-none">
+   374→            {suffix}
+   375→          </span>
+   376→        )}
+   377→      </div>
+   378→    </div>
+   379→  );
+   380→
+   381→  // ── Render input form ────────────────────────────────────────────────────
+   382→  const renderForm = () => (
+   383→    <motion.div
+   384→      initial={{ opacity: 0, y: 8 }}
+   385→      animate={{ opacity: 1, y: 0 }}
+   386→      transition={{ duration: 0.3 }}
+   387→      className="space-y-6"
+   388→    >
+   389→      {/* Project info */}
+   390→      <GlassCard className="p-5">
+   391→        <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   392→          <Flame className="w-4 h-4 text-[#8b5cf6]" />
+   393→          Project Information
+   394→        </h3>
+   395→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   396→          <div className="flex flex-col gap-1.5">
+   397→            <Label className="text-[#8888a0] text-xs">Project Name *</Label>
+   398→            <AnimatedInput
+   399→              placeholder="e.g. My Firebase Project"
+   400→              value={formData.name}
+   401→              onChange={(e) =>
+   402→                setFormData((prev) => ({ ...prev, name: e.target.value }))
+   403→              }
+   404→            />
+   405→          </div>
+   406→          <div className="flex flex-col gap-1.5">
+   407→            <Label className="text-[#8888a0] text-xs">Billing Period</Label>
+   408→            <AnimatedInput
+   409→              type="month"
+   410→              value={formData.period}
+   411→              onChange={(e) =>
+   412→                setFormData((prev) => ({ ...prev, period: e.target.value }))
+   413→              }
+   414→            />
+   415→          </div>
+   416→        </div>
+   417→      </GlassCard>
+   418→
+   419→      {/* Firestore */}
+   420→      <GlassCard className="p-5">
+   421→        <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   422→          <Database className="w-4 h-4 text-[#8b5cf6]" />
+   423→          Cloud Firestore
+   424→        </h3>
+   425→        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   426→          <NumberField
+   427→            label="Document Reads"
+   428→            icon={<Zap className="w-3.5 h-3.5" />}
+   429→            section="firestore"
+   430→            field="reads"
+   431→            placeholder="1,500,000"
+   432→            suffix="reads"
+   433→          />
+   434→          <NumberField
+   435→            label="Document Writes"
+   436→            icon={<Zap className="w-3.5 h-3.5" />}
+   437→            section="firestore"
+   438→            field="writes"
+   439→            placeholder="300,000"
+   440→            suffix="writes"
+   441→          />
+   442→          <NumberField
+   443→            label="Document Deletes"
+   444→            icon={<Zap className="w-3.5 h-3.5" />}
+   445→            section="firestore"
+   446→            field="deletes"
+   447→            placeholder="50,000"
+   448→            suffix="deletes"
+   449→          />
+   450→        </div>
+   451→      </GlassCard>
+   452→
+   453→      {/* Storage */}
+   454→      <GlassCard className="p-5">
+   455→        <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   456→          <HardDrive className="w-4 h-4 text-[#3b82f6]" />
+   457→          Cloud Storage
+   458→        </h3>
+   459→        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   460→          <NumberField
+   461→            label="Stored Data"
+   462→            icon={<HardDrive className="w-3.5 h-3.5" />}
+   463→            section="storage"
+   464→            field="storedGB"
+   465→            placeholder="45"
+   466→            suffix="GB"
+   467→          />
+   468→          <NumberField
+   469→            label="Downloaded Data"
+   470→            icon={<ArrowRight className="w-3.5 h-3.5" />}
+   471→            section="storage"
+   472→            field="downloadGB"
+   473→            placeholder="120"
+   474→            suffix="GB"
+   475→          />
+   476→          <NumberField
+   477→            label="Uploaded Data"
+   478→            icon={<ArrowRight className="w-3.5 h-3.5 rotate-180" />}
+   479→            section="storage"
+   480→            field="uploadGB"
+   481→            placeholder="30"
+   482→            suffix="GB"
+   483→          />
+   484→        </div>
+   485→      </GlassCard>
+   486→
+   487→      {/* Auth */}
+   488→      <GlassCard className="p-5">
+   489→        <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   490→          <Shield className="w-4 h-4 text-[#06b6d4]" />
+   491→          Authentication (Identity Platform)
+   492→        </h3>
+   493→        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   494→          <NumberField
+   495→            label="Monthly Active Users"
+   496→            icon={<Shield className="w-3.5 h-3.5" />}
+   497→            section="auth"
+   498→            field="monthlyActiveUsers"
+   499→            placeholder="25,000"
+   500→            suffix="MAU"
+   501→          />
+   502→        </div>
+   503→      </GlassCard>
+   504→
+   505→      {/* Hosting & Functions */}
+   506→      <GlassCard className="p-5">
+   507→        <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   508→          <Globe className="w-4 h-4 text-[#a78bfa]" />
+   509→          Hosting & Cloud Functions
+   510→        </h3>
+   511→        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   512→          <NumberField
+   513→            label="Hosting Transfer"
+   514→            icon={<Globe className="w-3.5 h-3.5" />}
+   515→            section="hosting"
+   516→            field="transferGB"
+   517→            placeholder="200"
+   518→            suffix="GB"
+   519→          />
+   520→          <NumberField
+   521→            label="Function Invocations"
+   522→            icon={<Server className="w-3.5 h-3.5" />}
+   523→            section="hosting"
+   524→            field="functionInvocations"
+   525→            placeholder="500,000"
+   526→            suffix="invocations"
+   527→          />
+   528→          <NumberField
+   529→            label="Function Compute"
+   530→            icon={<Server className="w-3.5 h-3.5" />}
+   531→            section="hosting"
+   532→            field="functionComputeGBs"
+   533→            placeholder="800"
+   534→            suffix="GB-sec"
+   535→          />
+   536→        </div>
+   537→      </GlassCard>
+   538→
+   539→      {/* Actions */}
+   540→      <div className="flex items-center justify-between pt-2">
+   541→        <GlowButton
+   542→          variant="secondary"
+   543→          size="md"
+   544→          onClick={loadSample}
+   545→          disabled={loadingSample}
+   546→        >
+   547→          {loadingSample ? (
+   548→            <Loader2 className="w-4 h-4 animate-spin" />
+   549→          ) : (
+   550→            <Sparkles className="w-4 h-4" />
+   551→          )}
+   552→          Load Sample Data
+   553→        </GlowButton>
+   554→        <GlowButton
+   555→          size="lg"
+   556→          onClick={runAnalysis}
+   557→          disabled={analyzing || !formData.name.trim()}
+   558→        >
+   559→          {analyzing ? (
+   560→            <Loader2 className="w-4 h-4 animate-spin" />
+   561→          ) : (
+   562→            <BarChart3 className="w-4 h-4" />
+   563→          )}
+   564→          {analyzing ? 'Analyzing...' : 'Analyze Costs'}
+   565→        </GlowButton>
+   566→      </div>
+   567→    </motion.div>
+   568→  );
+   569→
+   570→  // ── Render results dashboard ─────────────────────────────────────────────
+   571→  const renderResults = () => {
+   572→    if (analyzing) {
+   573→      return (
+   574→        <div className="space-y-4">
+   575→          <ShimmerCard />
+   576→          <ShimmerCard />
+   577→          <ShimmerCard />
+   578→        </div>
+   579→      );
+   580→    }
+   581→
+   582→    if (!result) {
+   583→      return (
+   584→        <EmptyState
+   585→          icon={<BarChart3 className="w-12 h-12" />}
+   586→          title="No Analysis Yet"
+   587→          description="Fill in your Firebase usage metrics and run an analysis to see detailed cost breakdowns and AI recommendations."
+   588→          action={
+   589→            <GlowButton variant="secondary" onClick={() => setActiveTab('analyze')}>
+   590→              Go to Input Form
+   591→            </GlowButton>
+   592→          }
+   593→        />
+   594→      );
+   595→    }
+   596→
+   597→    const { analysis, recommendations } = result;
+   598→    const pieData = analysis.costByService.map((s) => ({
+   599→      ...s,
+   600→      color: SERVICE_COLOR_MAP[s.name] || '#55556a',
+   601→    }));
+   602→
+   603→    return (
+   604→      <motion.div
+   605→        initial={{ opacity: 0, y: 8 }}
+   606→        animate={{ opacity: 1, y: 0 }}
+   607→        transition={{ duration: 0.4 }}
+   608→        className="space-y-6"
+   609→      >
+   610→        {/* Summary cards */}
+   611→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+   612→          {/* Total Cost */}
+   613→          <GlassCard glow="purple" hover className="p-4">
+   614→            <div className="flex items-center gap-2 mb-2">
+   615→              <DollarSign className="w-4 h-4 text-[#8b5cf6]" />
+   616→              <span className="text-xs text-[#8888a0] font-medium">Total Monthly Cost</span>
+   617→            </div>
+   618→            <p className="text-2xl font-bold text-[#f0f0f5]">{formatCurrency(analysis.total)}</p>
+   619→            <p className="text-xs text-[#55556a] mt-1">{result.name}</p>
+   620→          </GlassCard>
+   621→
+   622→          {/* Top Cost Driver */}
+   623→          <GlassCard glow="blue" hover className="p-4">
+   624→            <div className="flex items-center gap-2 mb-2">
+   625→              <AlertTriangle className="w-4 h-4 text-[#3b82f6]" />
+   626→              <span className="text-xs text-[#8888a0] font-medium">Biggest Cost Driver</span>
+   627→            </div>
+   628→            <p className="text-lg font-bold text-[#f0f0f5]">{analysis.topDriver.metric}</p>
+   629→            <p className="text-sm text-[#60a5fa] mt-1">{formatCurrency(analysis.topDriver.cost)}</p>
+   630→          </GlassCard>
+   631→
+   632→          {/* Estimated Savings Low */}
+   633→          <GlassCard glow="cyan" hover className="p-4">
+   634→            <div className="flex items-center gap-2 mb-2">
+   635→              <TrendingDown className="w-4 h-4 text-[#06b6d4]" />
+   636→              <span className="text-xs text-[#8888a0] font-medium">Min. Potential Savings</span>
+   637→            </div>
+   638→            <p className="text-lg font-bold text-[#f0f0f5]">
+   639→              {formatCurrency(analysis.estimatedSavingsLow)}
+   640→            </p>
+   641→            <p className="text-xs text-[#55556a] mt-1">~15% with optimizations</p>
+   642→          </GlassCard>
+   643→
+   644→          {/* Estimated Savings High */}
+   645→          <GlassCard glow="purple" hover className="p-4">
+   646→            <div className="flex items-center gap-2 mb-2">
+   647→              <Sparkles className="w-4 h-4 text-[#a78bfa]" />
+   648→              <span className="text-xs text-[#8888a0] font-medium">Max. Potential Savings</span>
+   649→            </div>
+   650→            <p className="text-lg font-bold text-[#f0f0f5]">
+   651→              {formatCurrency(analysis.estimatedSavingsHigh)}
+   652→            </p>
+   653→            <p className="text-xs text-[#55556a] mt-1">~35% with optimizations</p>
+   654→          </GlassCard>
+   655→        </div>
+   656→
+   657→        {/* Charts row */}
+   658→        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+   659→          {/* Bar Chart - Cost by Service */}
+   660→          <GlassCard className="p-5">
+   661→            <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   662→              <BarChart3 className="w-4 h-4 text-[#8b5cf6]" />
+   663→              Cost Breakdown by Service
+   664→            </h3>
+   665→            <div className="h-64">
+   666→              <ResponsiveContainer width="100%" height="100%">
+   667→                <BarChart
+   668→                  data={analysis.costByService}
+   669→                  margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+   670→                >
+   671→                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+   672→                  <XAxis
+   673→                    dataKey="name"
+   674→                    tick={{ fill: '#8888a0', fontSize: 11 }}
+   675→                    axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+   676→                    tickLine={false}
+   677→                  />
+   678→                  <YAxis
+   679→                    tick={{ fill: '#8888a0', fontSize: 11 }}
+   680→                    axisLine={{ stroke: 'rgba(255,255,255,0.06)' }}
+   681→                    tickLine={false}
+   682→                    tickFormatter={(v: number) => '$' + v.toFixed(0)}
+   683→                  />
+   684→                  <RechartsTooltip content={<CustomTooltip />} />
+   685→                  <Bar dataKey="cost" name="Cost" radius={[4, 4, 0, 0]}>
+   686→                    {analysis.costByService.map((entry, index) => (
+   687→                      <Cell
+   688→                        key={index}
+   689→                        fill={SERVICE_COLOR_MAP[entry.name] || CHART_COLORS[index % CHART_COLORS.length]}
+   690→                      />
+   691→                    ))}
+   692→                  </Bar>
+   693→                </BarChart>
+   694→              </ResponsiveContainer>
+   695→            </div>
+   696→          </GlassCard>
+   697→
+   698→          {/* Pie Chart - Distribution */}
+   699→          <GlassCard className="p-5">
+   700→            <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   701→              <Globe className="w-4 h-4 text-[#3b82f6]" />
+   702→              Cost Distribution
+   703→            </h3>
+   704→            <div className="h-64">
+   705→              <ResponsiveContainer width="100%" height="100%">
+   706→                <PieChart>
+   707→                  <Pie
+   708→                    data={pieData}
+   709→                    cx="50%"
+   710→                    cy="45%"
+   711→                    innerRadius={50}
+   712→                    outerRadius={85}
+   713→                    dataKey="cost"
+   714→                    nameKey="name"
+   715→                    paddingAngle={2}
+   716→                    label={renderCustomLabel}
+   717→                    labelLine={false}
+   718→                  >
+   719→                    {pieData.map((entry, index) => (
+   720→                      <Cell key={index} fill={entry.color} />
+   721→                    ))}
+   722→                  </Pie>
+   723→                  <Legend
+   724→                    verticalAlign="bottom"
+   725→                    iconType="circle"
+   726→                    iconSize={8}
+   727→                    formatter={(value: string) => (
+   728→                      <span className="text-xs text-[#8888a0]">{value}</span>
+   729→                    )}
+   730→                  />
+   731→                  <RechartsTooltip content={<CustomTooltip />} />
+   732→                </PieChart>
+   733→              </ResponsiveContainer>
+   734→            </div>
+   735→          </GlassCard>
+   736→        </div>
+   737→
+   738→        {/* Detailed Table */}
+   739→        <GlassCard className="p-5">
+   740→          <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   741→            <Database className="w-4 h-4 text-[#06b6d4]" />
+   742→            Detailed Cost Breakdown
+   743→          </h3>
+   744→          <ScrollArea className="max-h-96">
+   745→            <Table>
+   746→              <TableHeader>
+   747→                <TableRow className="border-[rgba(255,255,255,0.06)]">
+   748→                  <TableHead className="text-[#8888a0] text-xs">Service</TableHead>
+   749→                  <TableHead className="text-[#8888a0] text-xs">Metric</TableHead>
+   750→                  <TableHead className="text-[#8888a0] text-xs text-right">Usage</TableHead>
+   751→                  <TableHead className="text-[#8888a0] text-xs text-right">Unit Cost</TableHead>
+   752→                  <TableHead className="text-[#8888a0] text-xs text-right">Total Cost</TableHead>
+   753→                </TableRow>
+   754→              </TableHeader>
+   755→              <TableBody>
+   756→                {analysis.items.map((item, i) => (
+   757→                  <TableRow key={i} className="border-[rgba(255,255,255,0.04)]">
+   758→                    <TableCell>
+   759→                      <ForgeBadge
+   760→                        variant={
+   761→                          item.service === 'Firestore'
+   762→                            ? 'purple'
+   763→                            : item.service === 'Cloud Storage'
+   764→                              ? 'blue'
+   765→                              : item.service === 'Authentication'
+   766→                                ? 'cyan'
+   767→                                : item.service === 'Hosting'
+   768→                                  ? 'purple'
+   769→                                  : 'blue'
+   770→                        }
+   771→                      >
+   772→                        {item.service}
+   773→                      </ForgeBadge>
+   774→                    </TableCell>
+   775→                    <TableCell className="text-[#f0f0f5] text-sm">{item.metric}</TableCell>
+   776→                    <TableCell className="text-right text-sm text-[#8888a0]">
+   777→                      {formatNumber(item.usage)} {item.unit}
+   778→                    </TableCell>
+   779→                    <TableCell className="text-right text-sm text-[#8888a0]">
+   780→                      {item.unitCost < 0.001
+   781→                        ? `$${item.unitCost}`
+   782→                        : item.unitCost < 1
+   783→                          ? `$${item.unitCost}/100K`
+   784→                          : `$${item.unitCost}/${item.unit}`}
+   785→                    </TableCell>
+   786→                    <TableCell className="text-right text-sm font-medium text-[#f0f0f5]">
+   787→                      {formatCurrency(item.totalCost)}
+   788→                    </TableCell>
+   789→                  </TableRow>
+   790→                ))}
+   791→                {/* Total row */}
+   792→                <TableRow className="border-t border-[rgba(139,92,246,0.2)] bg-[rgba(139,92,246,0.04)]">
+   793→                  <TableCell colSpan={4} className="text-right text-sm font-bold text-[#f0f0f5]">
+   794→                    Total
+   795→                  </TableCell>
+   796→                  <TableCell className="text-right text-sm font-bold text-[#a78bfa]">
+   797→                    {formatCurrency(analysis.total)}
+   798→                  </TableCell>
+   799→                </TableRow>
+   800→              </TableBody>
+   801→            </Table>
+   802→          </ScrollArea>
+   803→        </GlassCard>
+   804→
+   805→        {/* Cost Comparison */}
+   806→        <GlassCard className="p-5">
+   807→          <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   808→            <TrendingDown className="w-4 h-4 text-[#4ade80]" />
+   809→            Cost Comparison
+   810→          </h3>
+   811→          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+   812→            <div className="rounded-lg bg-[rgba(239,68,68,0.06)] border border-[rgba(239,68,68,0.12)] p-4 text-center">
+   813→              <p className="text-xs text-[#f87171] mb-1 font-medium">Current Cost</p>
+   814→              <p className="text-xl font-bold text-[#f0f0f5]">{formatCurrency(analysis.total)}</p>
+   815→            </div>
+   816→            <div className="rounded-lg bg-[rgba(34,197,94,0.06)] border border-[rgba(34,197,94,0.12)] p-4 text-center">
+   817→              <p className="text-xs text-[#4ade80] mb-1 font-medium">
+   818→                After Optimizations (est.)
+   819→              </p>
+   820→              <p className="text-xl font-bold text-[#f0f0f5]">
+   821→                {formatCurrency(analysis.estimatedSavingsHigh)}
+   822→              </p>
+   823→            </div>
+   824→            <div className="rounded-lg bg-[rgba(139,92,246,0.06)] border border-[rgba(139,92,246,0.12)] p-4 text-center">
+   825→              <p className="text-xs text-[#a78bfa] mb-1 font-medium">Potential Savings</p>
+   826→              <p className="text-xl font-bold text-[#f0f0f5]">
+   827→                {formatCurrency(analysis.total - analysis.estimatedSavingsHigh)}
+   828→              </p>
+   829→              <p className="text-xs text-[#55556a] mt-1">
+   830→                {analysis.total > 0
+   831→                  ? `${((analysis.estimatedSavingsHigh / analysis.total) * 100).toFixed(0)}% reduction`
+   832→                  : 'N/A'}
+   833→              </p>
+   834→            </div>
+   835→          </div>
+   836→        </GlassCard>
+   837→
+   838→        {/* AI Recommendations */}
+   839→        {recommendations && (
+   840→          <GlassCard glow="purple" className="p-5">
+   841→            <h3 className="text-sm font-medium text-[#f0f0f5] mb-4 flex items-center gap-2">
+   842→              <Sparkles className="w-4 h-4 text-[#a78bfa]" />
+   843→              AI-Powered Recommendations
+   844→            </h3>
+   845→            <ScrollArea className="max-h-96">
+   846→              <div className="prose prose-invert prose-sm max-w-none [&_h2]:text-[#f0f0f5] [&_h2]:text-base [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:font-semibold [&_h3]:text-[#c0c0d0] [&_h3]:text-sm [&_h3]:mt-3 [&_h3]:mb-1 [&_h3]:font-medium [&_p]:text-[#8888a0] [&_p]:leading-relaxed [&_li]:text-[#8888a0] [&_li]:leading-relaxed [&_strong]:text-[#c0c0d0] [&_ul]:space-y-1 [&_ol]:space-y-1 [&_code]:text-[#a78bfa] [&_code]:bg-[rgba(139,92,246,0.08)] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_pre]:bg-[rgba(0,0,0,0.3)] [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-[#8b5cf6]/40 [&_blockquote]:pl-3 [&_blockquote]:text-[#8888a0]">
+   847→                <ReactMarkdown>{recommendations}</ReactMarkdown>
+   848→              </div>
+   849→            </ScrollArea>
+   850→          </GlassCard>
+   851→        )}
+   852→      </motion.div>
+   853→    );
+   854→  };
+   855→
+   856→  // ── Render report history ────────────────────────────────────────────────
+   857→  const renderHistory = () => (
+   858→    <motion.div
+   859→      initial={{ opacity: 0, y: 8 }}
+   860→      animate={{ opacity: 1, y: 0 }}
+   861→      transition={{ duration: 0.3 }}
+   862→    >
+   863→      {loadingReports ? (
+   864→        <div className="space-y-4">
+   865→          <ShimmerCard />
+   866→          <ShimmerCard />
+   867→        </div>
+   868→      ) : reports.length === 0 ? (
+   869→        <EmptyState
+   870→          icon={<History className="w-12 h-12" />}
+   871→          title="No Reports Yet"
+   872→          description="Run your first Firebase cost analysis to start building a history of reports."
+   873→          action={
+   874→            <GlowButton variant="secondary" onClick={() => setActiveTab('analyze')}>
+   875→              Run First Analysis
+   876→            </GlowButton>
+   877→          }
+   878→        />
+   879→      ) : (
+   880→        <ScrollArea className="max-h-[600px]">
+   881→          <div className="space-y-3">
+   882→            {reports.map((report, i) => (
+   883→              <motion.div
+   884→                key={report.id}
+   885→                initial={{ opacity: 0, y: 4 }}
+   886→                animate={{ opacity: 1, y: 0 }}
+   887→                transition={{ delay: i * 0.04 }}
+   888→              >
+   889→                <GlassCard
+   890→                  hover
+   891→                  className="p-4 flex items-center justify-between gap-4"
+   892→                >
+   893→                  <div className="flex-1 min-w-0">
+   894→                    <div className="flex items-center gap-2 mb-1">
+   895→                      <Flame className="w-4 h-4 text-[#8b5cf6] shrink-0" />
+   896→                      <h4 className="text-sm font-medium text-[#f0f0f5] truncate">
+   897→                        {report.name}
+   898→                      </h4>
+   899→                      {report.period && (
+   900→                        <ForgeBadge variant="default">{report.period}</ForgeBadge>
+   901→                      )}
+   902→                    </div>
+   903→                    <p className="text-xs text-[#55556a]">
+   904→                      {formatDate(report.createdAt)}
+   905→                    </p>
+   906→                  </div>
+   907→                  <div className="flex items-center gap-3 shrink-0">
+   908→                    {report.totalCost !== null && (
+   909→                      <span className="text-sm font-semibold text-[#a78bfa]">
+   910→                        {formatCurrency(report.totalCost)}
+   911→                      </span>
+   912→                    )}
+   913→                    <GlowButton
+   914→                      variant="ghost"
+   915→                      size="sm"
+   916→                      onClick={() => viewReport(report.id)}
+   917→                      disabled={loadingViewReport}
+   918→                    >
+   919→                      {loadingViewReport ? (
+   920→                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+   921→                      ) : (
+   922→                        <Eye className="w-3.5 h-3.5" />
+   923→                      )}
+   924→                      View
+   925→                    </GlowButton>
+   926→                    <GlowButton
+   927→                      variant="ghost"
+   928→                      size="sm"
+   929→                      onClick={() => deleteReport(report.id)}
+   930→                    >
+   931→                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+   932→                    </GlowButton>
+   933→                  </div>
+   934→                </GlassCard>
+   935→              </motion.div>
+   936→            ))}
+   937→          </div>
+   938→        </ScrollArea>
+   939→      )}
+   940→    </motion.div>
+   941→  );
+   942→
+   943→  // ── Main render ──────────────────────────────────────────────────────────
+   944→  return (
+   945→    <WorkspaceLayout>
+   946→      <Tabs value={activeTab} onValueChange={handleTabChange}>
+   947→        <TabsList className="bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.06)]">
+   948→          <TabsTrigger
+   949→            value="analyze"
+   950→            className="data-[state=active]:bg-[rgba(139,92,246,0.15)] data-[state=active]:text-[#a78bfa] text-[#8888a0] text-xs gap-1.5"
+   951→          >
+   952→            <Flame className="w-3.5 h-3.5" />
+   953→            Input & Analyze
+   954→          </TabsTrigger>
+   955→          <TabsTrigger
+   956→            value="results"
+   957→            className="data-[state=active]:bg-[rgba(139,92,246,0.15)] data-[state=active]:text-[#a78bfa] text-[#8888a0] text-xs gap-1.5"
+   958→          >
+   959→            <BarChart3 className="w-3.5 h-3.5" />
+   960→            Results
+   961→            {result && !analyzing && (
+   962→              <ForgeBadge variant="purple" className="ml-1">New</ForgeBadge>
+   963→            )}
+   964→          </TabsTrigger>
+   965→          <TabsTrigger
+   966→            value="history"
+   967→            className="data-[state=active]:bg-[rgba(139,92,246,0.15)] data-[state=active]:text-[#a78bfa] text-[#8888a0] text-xs gap-1.5"
+   968→          >
+   969→            <History className="w-3.5 h-3.5" />
+   970→            History
+   971→            {reports.length > 0 && (
+   972→              <ForgeBadge variant="default" className="ml-1">{reports.length}</ForgeBadge>
+   973→            )}
+   974→          </TabsTrigger>
+   975→        </TabsList>
+   976→
+   977→        <AnimatePresence mode="wait">
+   978→          <motion.div
+   979→            key={activeTab}
+   980→            initial={{ opacity: 0, y: 6 }}
+   981→            animate={{ opacity: 1, y: 0 }}
+   982→            exit={{ opacity: 0, y: -6 }}
+   983→            transition={{ duration: 0.2 }}
+   984→          >
+   985→            <TabsContent value="analyze">{renderForm()}</TabsContent>
+   986→            <TabsContent value="results">{renderResults()}</TabsContent>
+   987→            <TabsContent value="history">{renderHistory()}</TabsContent>
+   988→          </motion.div>
+   989→        </AnimatePresence>
+   990→      </Tabs>
+   991→    </WorkspaceLayout>
+   992→  );
+   993→}

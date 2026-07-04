@@ -32,7 +32,7 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
       include: {
         _count: {
-          select: { PromptVersion: true },
+          select: { versions: true },
         },
       },
     });
@@ -42,7 +42,7 @@ export async function GET() {
       name: p.name,
       description: p.description,
       createdAt: p.createdAt.toISOString(),
-      versionCount: p._count.PromptVersion,
+      versionCount: p._count.versions,
     }));
 
     return NextResponse.json(result);

@@ -327,3 +327,32 @@ Stage Summary:
 - File changed: /home/z/my-project/src/app/api/recorder/endpoints/route.ts (slug validation added)
 - All 4 test cases passed: auto-slug generation, custom slug input, duplicate slug error, empty name validation
 - Lint passes clean
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Audit all 4 remaining tools for UX issues similar to the API Recorder auto-create bug
+
+Work Log:
+- Audited OpenAPI Mock Server: ✅ No issues — proper upload form with name, textarea, drag-drop, validation
+- Audited AI Prompt Version Manager: 🔴 Found 3 bugs
+  1. "Test with AI" button called non-existent /api/prompt-manager/versions/[id]/test route
+  2. No way to fill in {{variables}} before testing — variables sent raw
+  3. Prisma schema missing PromptProject ↔ PromptVersion relation (caused 500 on project list)
+- Audited Firebase Cost Analyzer: 🟠 Found 1 bug
+  1. All error handlers silently catch errors with no user feedback (loadSample, runAnalysis, loadReports, viewReport, deleteReport)
+- Audited PR Review Assistant: ✅ No issues — proper error toasts, form validation, clear flow
+
+Fixes Applied:
+- Created /api/prompt-manager/versions/[id]/test/route.ts with ZAI LLM integration and variable substitution
+- Added variable fill-in UI panel to PromptManager.tsx (shows input fields for each {{variable}}, "Run Test" button)
+- Fixed Prisma schema: added @relation between PromptProject and PromptVersion with cascade delete
+- Fixed projects GET API: changed _count.PromptVersion → _count.versions
+- Fixed project detail API: changed include.PromptVersion → include.versions
+- Fixed all 6 silent catch blocks in FirebaseAnalyzer.tsx → now show toast notifications
+- Fixed AiResponse.create to match actual Prisma schema fields
+
+Stage Summary:
+- Files created: src/app/api/prompt-manager/versions/[id]/test/route.ts
+- Files changed: prisma/schema.prisma, 3 API routes, PromptManager.tsx, FirebaseAnalyzer.tsx
+- All fixes browser-tested: project list loads, version creates, variables fill in, AI test returns response, toasts work

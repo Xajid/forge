@@ -77,6 +77,7 @@ model PromptVersion {
   id          String   @id @default(cuid())
   userId      String?
   projectId   String
+  project     PromptProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title       String
   content     String
   version     Int
@@ -88,11 +89,12 @@ model PromptVersion {
 }
 
 model PromptProject {
-  id        String   @id @default(cuid())
-  userId    String?
-  name      String
+  id          String        @id @default(cuid())
+  userId      String?
+  name        String
   description String?
-  createdAt DateTime @default(now())
+  versions    PromptVersion[]
+  createdAt   DateTime      @default(now())
 }
 
 model AiResponse {

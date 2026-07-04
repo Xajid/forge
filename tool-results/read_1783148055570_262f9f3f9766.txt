@@ -1,0 +1,1175 @@
+     1→'use client';
+     2→
+     3→import React, { useState, useCallback, useEffect, useMemo } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import {
+     6→  GitBranch,
+     7→  Plus,
+     8→  FolderOpen,
+     9→  Trash2,
+    10→  ChevronRight,
+    11→  Clock,
+    12→  Copy,
+    13→  Check,
+    14→  Download,
+    15→  Play,
+    16→  RotateCcw,
+    17→  GitCompareArrows,
+    18→  X,
+    19→  Tag,
+    20→  FileText,
+    21→  Loader2,
+    22→  AlertCircle,
+    23→  ArrowLeft,
+    24→  GitCommitHorizontal,
+    25→  MessageSquare,
+    26→  ChevronDown,
+    27→} from 'lucide-react';
+    28→import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
+    29→import { GlassCard } from '@/components/forge/GlassCard';
+    30→import { GlassCardStatic } from '@/components/forge/GlassCard';
+    31→import { GlowButton } from '@/components/forge/GlowButton';
+    32→import { AnimatedInput, AnimatedTextarea } from '@/components/forge/AnimatedInput';
+    33→import { EmptyState } from '@/components/forge/EmptyState';
+    34→import { ShimmerCard } from '@/components/forge/Shimmer';
+    35→import { ForgeBadge } from '@/components/forge/ForgeBadge';
+    36→import { GradientBorder } from '@/components/forge/GradientBorder';
+    37→import { CodeViewer } from '@/components/forge/CodeViewer';
+    38→import { ScrollArea } from '@/components/ui/scroll-area';
+    39→import { Separator } from '@/components/ui/separator';
+    40→import {
+    41→  Dialog,
+    42→  DialogContent,
+    43→  DialogHeader,
+    44→  DialogTitle,
+    45→  DialogDescription,
+    46→  DialogFooter,
+    47→} from '@/components/ui/dialog';
+    48→import {
+    49→  DropdownMenu,
+    50→  DropdownMenuTrigger,
+    51→  DropdownMenuContent,
+    52→  DropdownMenuItem,
+    53→  DropdownMenuSeparator,
+    54→} from '@/components/ui/dropdown-menu';
+    55→import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+    56→import type { PromptProject, PromptVersion, AiResponse } from '@/lib/types';
+    57→
+    58→// ── Types ───────────────────────────────────────────────────────────────
+    59→
+    60→interface ProjectWithCount extends PromptProject {
+    61→  versionCount?: number;
+    62→}
+    63→
+    64→type View = 'list' | 'detail' | 'create-project' | 'create-version' | 'compare';
+    65→
+    66→// ── Variable highlighter component ──────────────────────────────────────
+    67→
+    68→function PromptContent({ content, className }: { content: string; className?: string }) {
+    69→  const parts = useMemo(() => {
+    70→    const regex = /\{\{(\w+)\}\}/g;
+    71→    const result: { text: string; isVar: boolean; varName?: string }[] = [];
+    72→    let lastIndex = 0;
+    73→    let match;
+    74→
+    75→    while ((match = regex.exec(content)) !== null) {
+    76→      if (match.index > lastIndex) {
+    77→        result.push({ text: content.slice(lastIndex, match.index), isVar: false });
+    78→      }
+    79→      result.push({ text: match[0], isVar: true, varName: match[1] });
+    80→      lastIndex = match.index + match[0].length;
+    81→    }
+    82→
+    83→    if (lastIndex < content.length) {
+    84→      result.push({ text: content.slice(lastIndex), isVar: false });
+    85→    }
+    86→
+    87→    return result;
+    88→  }, [content]);
+    89→
+    90→  return (
+    91→    <div className={`whitespace-pre-wrap break-words text-sm leading-relaxed ${className || ''}`}>
+    92→      {parts.map((part, i) =>
+    93→        part.isVar ? (
+    94→          <span
+    95→            key={i}
+    96→            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mx-0.5 rounded-md bg-[rgba(139,92,246,0.15)] text-[#c4b5fd] border border-[rgba(139,92,246,0.25)] font-mono text-xs"
+    97→          >
+    98→            <Tag className="w-2.5 h-2.5 shrink-0" />
+    99→            {part.varName}
+   100→          </span>
+   101→        ) : (
+   102→          <span key={i}>{part.text}</span>
+   103→        )
+   104→      )}
+   105→    </div>
+   106→  );
+   107→}
+   108→
+   109→// ── Diff component ──────────────────────────────────────────────────────
+   110→
+   111→function DiffView({ left, right }: { left: PromptVersion; right: PromptVersion }) {
+   112→  const leftLines = left.content.split('\n');
+   113→  const rightLines = right.content.split('\n');
+   114→  const maxLen = Math.max(leftLines.length, rightLines.length);
+   115→
+   116→  const diffLines = Array.from({ length: maxLen }, (_, i) => {
+   117→    const l = leftLines[i] ?? '';
+   118→    const r = rightLines[i] ?? '';
+   119→    return { left: l, right: r, changed: l !== r };
+   120→  });
+   121→
+   122→  const addedCount = diffLines.filter((d) => d.left === '' && d.right !== '').length;
+   123→  const removedCount = diffLines.filter((d) => d.left !== '' && d.right === '').length;
+   124→  const changedCount = diffLines.filter(
+   125→    (d) => d.left !== '' && d.right !== '' && d.left !== d.right
+   126→  ).length;
+   127→
+   128→  return (
+   129→    <div className="flex flex-col gap-3">
+   130→      <div className="flex items-center gap-3 text-xs text-[#8888a0]">
+   131→        <span>v{left.version}</span>
+   132→        <ChevronRight className="w-3 h-3" />
+   133→        <span>v{right.version}</span>
+   134→        <div className="flex-1" />
+   135→        {addedCount > 0 && <ForgeBadge variant="success">+{addedCount} added</ForgeBadge>}
+   136→        {removedCount > 0 && <ForgeBadge variant="destructive">-{removedCount} removed</ForgeBadge>}
+   137→        {changedCount > 0 && <ForgeBadge variant="warning">~{changedCount} changed</ForgeBadge>}
+   138→      </div>
+   139→      <div className="grid grid-cols-2 gap-2">
+   140→        <div className="text-xs text-[#55556a] mb-1">v{left.version} — {left.title}</div>
+   141→        <div className="text-xs text-[#55556a] mb-1">v{right.version} — {right.title}</div>
+   142→      </div>
+   143→      <div className="grid grid-cols-2 gap-3 max-h-[500px] overflow-auto rounded-lg border border-[rgba(255,255,255,0.06)]">
+   144→        <div className="bg-[rgba(0,0,0,0.2)] p-3">
+   145→          {diffLines.map((d, i) => (
+   146→            <div
+   147→              key={i}
+   148→              className={`text-xs font-mono leading-6 ${
+   149→                d.changed
+   150→                  ? d.left === ''
+   151→                    ? 'bg-[rgba(239,68,68,0.08)] text-[#f87171]'
+   152→                    : 'bg-[rgba(239,68,68,0.12)] text-[#fca5a5] line-through'
+   153→                  : 'text-[#8888a0]'
+   154→              }`}
+   155→            >
+   156→              <span className="inline-block w-6 text-right mr-3 text-[#333348] select-none">
+   157→                {i + 1}
+   158→              </span>
+   159→              {d.left}
+   160→            </div>
+   161→          ))}
+   162→        </div>
+   163→        <div className="bg-[rgba(0,0,0,0.2)] p-3">
+   164→          {diffLines.map((d, i) => (
+   165→            <div
+   166→              key={i}
+   167→              className={`text-xs font-mono leading-6 ${
+   168→                d.changed
+   169→                  ? d.right === ''
+   170→                    ? 'bg-[rgba(34,197,94,0.08)] text-[#4ade80]'
+   171→                    : 'bg-[rgba(34,197,94,0.12)] text-[#86efac]'
+   172→                  : 'text-[#8888a0]'
+   173→              }`}
+   174→            >
+   175→              <span className="inline-block w-6 text-right mr-3 text-[#333348] select-none">
+   176→                {i + 1}
+   177→              </span>
+   178→              {d.right}
+   179→            </div>
+   180→          ))}
+   181→        </div>
+   182→      </div>
+   183→    </div>
+   184→  );
+   185→}
+   186→
+   187→// ── Main Component ──────────────────────────────────────────────────────
+   188→
+   189→export default function PromptManager() {
+   190→  const [view, setView] = useState<View>('list');
+   191→  const [projects, setProjects] = useState<ProjectWithCount[]>([]);
+   192→  const [loading, setLoading] = useState(true);
+   193→  const [selectedProject, setSelectedProject] = useState<PromptProject & { versions: PromptVersion[] } | null>(null);
+   194→  const [selectedVersion, setSelectedVersion] = useState<PromptVersion | null>(null);
+   195→  const [compareVersion, setCompareVersion] = useState<PromptVersion | null>(null);
+   196→  const [aiResponses, setAiResponses] = useState<AiResponse[]>([]);
+   197→  const [testing, setTesting] = useState(false);
+   198→  const [latestAiResponse, setLatestAiResponse] = useState<AiResponse | null>(null);
+   199→  const [error, setError] = useState<string | null>(null);
+   200→
+   201→  // Create project form
+   202→  const [newProjectName, setNewProjectName] = useState('');
+   203→  const [newProjectDesc, setNewProjectDesc] = useState('');
+   204→
+   205→  // Create version form
+   206→  const [newVersionTitle, setNewVersionTitle] = useState('');
+   207→  const [newVersionContent, setNewVersionContent] = useState('');
+   208→  const [newVersionTags, setNewVersionTags] = useState('');
+   209→  const [newVersionNotes, setNewVersionNotes] = useState('');
+   210→  const [newVersionVariables, setNewVersionVariables] = useState('');
+   211→
+   212→  // Delete dialog
+   213→  const [deleteTarget, setDeleteTarget] = useState<{ type: 'project' | 'version'; id: string; name: string } | null>(null);
+   214→
+   215→  // Copied state
+   216→  const [copiedId, setCopiedId] = useState<string | null>(null);
+   217→
+   218→  // ── Fetch projects ──
+   219→  const fetchProjects = useCallback(async () => {
+   220→    setLoading(true);
+   221→    try {
+   222→      const res = await fetch('/api/prompt-manager/projects');
+   223→      const data = await res.json();
+   224→      if (Array.isArray(data)) setProjects(data);
+   225→    } catch {
+   226→      setError('Failed to load projects');
+   227→    } finally {
+   228→      setLoading(false);
+   229→    }
+   230→  }, []);
+   231→
+   232→  useEffect(() => {
+   233→    fetchProjects();
+   234→  }, [fetchProjects]);
+   235→
+   236→  // ── Fetch project detail ──
+   237→  const fetchProjectDetail = useCallback(async (projectId: string) => {
+   238→    setLoading(true);
+   239→    try {
+   240→      const res = await fetch(`/api/prompt-manager/projects/${projectId}`);
+   241→      if (!res.ok) throw new Error();
+   242→      const data = await res.json();
+   243→      setSelectedProject(data);
+   244→      setSelectedVersion(data.versions?.[0] || null);
+   245→      setAiResponses([]);
+   246→      setLatestAiResponse(null);
+   247→      setCompareVersion(null);
+   248→      setView('detail');
+   249→    } catch {
+   250→      setError('Failed to load project');
+   251→    } finally {
+   252→      setLoading(false);
+   253→    }
+   254→  }, []);
+   255→
+   256→  // ── Fetch AI responses for a version ──
+   257→  const fetchResponses = useCallback(async (versionId: string) => {
+   258→    try {
+   259→      const res = await fetch(`/api/prompt-manager/responses/version/${versionId}`);
+   260→      const data = await res.json();
+   261→      setAiResponses(Array.isArray(data) ? data : []);
+   262→    } catch {
+   263→      setAiResponses([]);
+   264→    }
+   265→  }, []);
+   266→
+   267→  // ── Select version ──
+   268→  const handleSelectVersion = useCallback(
+   269→    (version: PromptVersion) => {
+   270→      setSelectedVersion(version);
+   271→      setCompareVersion(null);
+   272→      setLatestAiResponse(null);
+   273→      fetchResponses(version.id);
+   274→    },
+   275→    [fetchResponses]
+   276→  );
+   277→
+   278→  // ── Create project ──
+   279→  const handleCreateProject = async () => {
+   280→    if (!newProjectName.trim()) return;
+   281→    setError(null);
+   282→    try {
+   283→      const res = await fetch('/api/prompt-manager/projects', {
+   284→        method: 'POST',
+   285→        headers: { 'Content-Type': 'application/json' },
+   286→        body: JSON.stringify({ name: newProjectName, description: newProjectDesc || undefined }),
+   287→      });
+   288→      if (!res.ok) throw new Error();
+   289→      setNewProjectName('');
+   290→      setNewProjectDesc('');
+   291→      setView('list');
+   292→      fetchProjects();
+   293→    } catch {
+   294→      setError('Failed to create project');
+   295→    }
+   296→  };
+   297→
+   298→  // ── Delete project ──
+   299→  const handleDeleteProject = async () => {
+   300→    if (!deleteTarget || deleteTarget.type !== 'project') return;
+   301→    try {
+   302→      await fetch(`/api/prompt-manager/projects/${deleteTarget.id}`, { method: 'DELETE' });
+   303→      setDeleteTarget(null);
+   304→      setView('list');
+   305→      setSelectedProject(null);
+   306→      fetchProjects();
+   307→    } catch {
+   308→      setError('Failed to delete project');
+   309→    }
+   310→  };
+   311→
+   312→  // ── Delete version ──
+   313→  const handleDeleteVersion = async () => {
+   314→    if (!deleteTarget || deleteTarget.type !== 'version' || !selectedProject) return;
+   315→    // Note: We don't have a direct delete version API, so we'll use a workaround
+   316→    // For now, just close the dialog. In production, add a dedicated API.
+   317→    setDeleteTarget(null);
+   318→    // We could add a dedicated DELETE /api/prompt-manager/versions/[id] if needed
+   319→    // For this implementation, refresh the project data
+   320→    fetchProjectDetail(selectedProject.id);
+   321→  };
+   322→
+   323→  // ── Create version ──
+   324→  const handleCreateVersion = async () => {
+   325→    if (!selectedProject || !newVersionTitle.trim() || !newVersionContent.trim()) return;
+   326→    setError(null);
+   327→    try {
+   328→      const tags = newVersionTags
+   329→        .split(',')
+   330→        .map((t) => t.trim())
+   331→        .filter(Boolean);
+   332→      const variables = newVersionVariables
+   333→        .split(',')
+   334→        .map((v) => v.trim())
+   335→        .filter(Boolean);
+   336→
+   337→      const res = await fetch('/api/prompt-manager/versions', {
+   338→        method: 'POST',
+   339→        headers: { 'Content-Type': 'application/json' },
+   340→        body: JSON.stringify({
+   341→          projectId: selectedProject.id,
+   342→          title: newVersionTitle,
+   343→          content: newVersionContent,
+   344→          tags: tags.length > 0 ? tags : undefined,
+   345→          notes: newVersionNotes || undefined,
+   346→          variables: variables.length > 0 ? variables : undefined,
+   347→        }),
+   348→      });
+   349→      if (!res.ok) throw new Error();
+   350→      setNewVersionTitle('');
+   351→      setNewVersionContent('');
+   352→      setNewVersionTags('');
+   353→      setNewVersionNotes('');
+   354→      setNewVersionVariables('');
+   355→      setView('detail');
+   356→      fetchProjectDetail(selectedProject.id);
+   357→    } catch {
+   358→      setError('Failed to create version');
+   359→    }
+   360→  };
+   361→
+   362→  // ── Rollback ──
+   363→  const handleRollback = async (version: PromptVersion) => {
+   364→    if (!selectedProject) return;
+   365→    setError(null);
+   366→    try {
+   367→      const res = await fetch(`/api/prompt-manager/versions/${version.id}/rollback`, {
+   368→        method: 'POST',
+   369→      });
+   370→      if (!res.ok) throw new Error();
+   371→      fetchProjectDetail(selectedProject.id);
+   372→    } catch {
+   373→      setError('Failed to rollback version');
+   374→    }
+   375→  };
+   376→
+   377→  // ── Test prompt ──
+   378→  const handleTest = async () => {
+   379→    if (!selectedVersion || testing) return;
+   380→    setTesting(true);
+   381→    setError(null);
+   382→    setLatestAiResponse(null);
+   383→    try {
+   384→      const res = await fetch(`/api/prompt-manager/versions/${selectedVersion.id}/test`, {
+   385→        method: 'POST',
+   386→      });
+   387→      if (!res.ok) throw new Error();
+   388→      const data = await res.json();
+   389→      setLatestAiResponse(data);
+   390→      setAiResponses((prev) => [data, ...prev]);
+   391→    } catch {
+   392→      setError('Failed to test prompt');
+   393→    } finally {
+   394→      setTesting(false);
+   395→    }
+   396→  };
+   397→
+   398→  // ── Copy content ──
+   399→  const handleCopy = (text: string, id: string) => {
+   400→    navigator.clipboard.writeText(text);
+   401→    setCopiedId(id);
+   402→    setTimeout(() => setCopiedId(null), 1500);
+   403→  };
+   404→
+   405→  // ── Export ──
+   406→  const handleExport = (version: PromptVersion, format: 'text' | 'markdown') => {
+   407→    let content: string;
+   408→    if (format === 'markdown') {
+   409→      content = `# ${version.title}\n\n**Version:** v${version.version}\n`;
+   410→      if (version.tags.length > 0) content += `**Tags:** ${version.tags.join(', ')}\n`;
+   411→      if (version.notes) content += `**Notes:** ${version.notes}\n`;
+   412→      if (version.variables.length > 0) content += `**Variables:** ${version.variables.join(', ')}\n`;
+   413→      content += `\n---\n\n${version.content}`;
+   414→    } else {
+   415→      content = version.content;
+   416→    }
+   417→    const blob = new Blob([content], { type: 'text/plain' });
+   418→    const url = URL.createObjectURL(blob);
+   419→    const a = document.createElement('a');
+   420→    a.href = url;
+   421→    a.download = `prompt-v${version.version}.${format === 'markdown' ? 'md' : 'txt'}`;
+   422→    a.click();
+   423→    URL.revokeObjectURL(url);
+   424→  };
+   425→
+   426→  // ── Extract variables from content ──
+   427→  const extractVariables = (content: string): string[] => {
+   428→    const matches = content.match(/\{\{(\w+)\}\}/g);
+   429→    if (!matches) return [];
+   430→    return [...new Set(matches.map((m) => m.replace(/\{\{|\}\}/g, '')))];
+   431→  };
+   432→
+   433→  // ── Date formatter ──
+   434→  const formatDate = (iso: string) => {
+   435→    const d = new Date(iso);
+   436→    const now = new Date();
+   437→    const diffMs = now.getTime() - d.getTime();
+   438→    const diffMin = Math.floor(diffMs / 60000);
+   439→    const diffHr = Math.floor(diffMs / 3600000);
+   440→    const diffDay = Math.floor(diffMs / 86400000);
+   441→    if (diffMin < 1) return 'just now';
+   442→    if (diffMin < 60) return `${diffMin}m ago`;
+   443→    if (diffHr < 24) return `${diffHr}h ago`;
+   444→    if (diffDay < 7) return `${diffDay}d ago`;
+   445→    return d.toLocaleDateString();
+   446→  };
+   447→
+   448→  // ── Render: Projects list ──
+   449→  const renderProjectList = () => {
+   450→    if (loading) {
+   451→      return (
+   452→        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+   453→          {Array.from({ length: 3 }).map((_, i) => (
+   454→            <ShimmerCard key={i} />
+   455→          ))}
+   456→        </div>
+   457→      );
+   458→    }
+   459→
+   460→    if (projects.length === 0) {
+   461→      return (
+   462→        <EmptyState
+   463→          icon={<GitBranch className="w-12 h-12" />}
+   464→          title="No prompt projects yet"
+   465→          description="Create your first project to start versioning your AI prompts."
+   466→          action={
+   467→            <GlowButton onClick={() => setView('create-project')} variant="primary">
+   468→              <Plus className="w-4 h-4" /> Create Project
+   469→            </GlowButton>
+   470→          }
+   471→        />
+   472→      );
+   473→    }
+   474→
+   475→    return (
+   476→      <motion.div
+   477→        initial={{ opacity: 0 }}
+   478→        animate={{ opacity: 1 }}
+   479→        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+   480→      >
+   481→        {projects.map((project, i) => (
+   482→          <motion.div
+   483→            key={project.id}
+   484→            initial={{ opacity: 0, y: 16 }}
+   485→            animate={{ opacity: 1, y: 0 }}
+   486→            transition={{ delay: i * 0.05, duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   487→          >
+   488→            <GlassCard
+   489→              hover
+   490→              glow="purple"
+   491→              className="p-5 flex flex-col gap-3 cursor-pointer group"
+   492→              onClick={() => fetchProjectDetail(project.id)}
+   493→            >
+   494→              <div className="flex items-start justify-between">
+   495→                <div className="w-9 h-9 rounded-lg bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center text-[#a78bfa] shrink-0">
+   496→                  <FolderOpen className="w-4 h-4" />
+   497→                </div>
+   498→                <DropdownMenu>
+   499→                  <DropdownMenuTrigger asChild>
+   500→                    <button
+   501→                      className="p-1.5 rounded-md text-[#55556a] hover:text-[#f0f0f5] hover:bg-[rgba(255,255,255,0.06)] opacity-0 group-hover:opacity-100 transition-all"
+   502→                      onClick={(e) => e.stopPropagation()}
+   503→                    >
+   504→                      <ChevronDown className="w-3.5 h-3.5" />
+   505→                    </button>
+   506→                  </DropdownMenuTrigger>
+   507→                  <DropdownMenuContent
+   508→                    align="end"
+   509→                    className="bg-[#12121a] border-[rgba(255,255,255,0.06)]"
+   510→                  >
+   511→                    <DropdownMenuItem
+   512→                      className="text-red-400 focus:text-red-300 focus:bg-red-500/10"
+   513→                      onClick={(e) => {
+   514→                        e.stopPropagation();
+   515→                        setDeleteTarget({ type: 'project', id: project.id, name: project.name });
+   516→                      }}
+   517→                    >
+   518→                      <Trash2 className="w-3.5 h-3.5" />
+   519→                      Delete
+   520→                    </DropdownMenuItem>
+   521→                  </DropdownMenuContent>
+   522→                </DropdownMenu>
+   523→              </div>
+   524→              <div>
+   525→                <h3 className="text-sm font-medium text-[#f0f0f5]">{project.name}</h3>
+   526→                {project.description && (
+   527→                  <p className="text-xs text-[#55556a] mt-1 line-clamp-2">{project.description}</p>
+   528→                )}
+   529→              </div>
+   530→              <div className="flex items-center justify-between mt-auto pt-2">
+   531→                <ForgeBadge variant="purple">
+   532→                  <GitCommitHorizontal className="w-2.5 h-2.5" />
+   533→                  v{(project.versionCount ?? 0) || 0} versions
+   534→                </ForgeBadge>
+   535→                <span className="text-[10px] text-[#44445a]">{formatDate(project.createdAt)}</span>
+   536→              </div>
+   537→            </GlassCard>
+   538→          </motion.div>
+   539→        ))}
+   540→      </motion.div>
+   541→    );
+   542→  };
+   543→
+   544→  // ── Render: Create project ──
+   545→  const renderCreateProject = () => (
+   546→    <motion.div
+   547→      initial={{ opacity: 0, y: 12 }}
+   548→      animate={{ opacity: 1, y: 0 }}
+   549→      className="max-w-lg mx-auto"
+   550→    >
+   551→      <GradientBorder color="purple">
+   552→        <GlassCardStatic className="p-6 flex flex-col gap-5">
+   553→          <div className="flex items-center gap-3">
+   554→            <div className="w-10 h-10 rounded-xl bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center text-[#a78bfa]">
+   555→              <Plus className="w-5 h-5" />
+   556→            </div>
+   557→            <div>
+   558→              <h2 className="text-base font-semibold text-[#f0f0f5]">New Project</h2>
+   559→              <p className="text-xs text-[#55556a]">Create a prompt project</p>
+   560→            </div>
+   561→          </div>
+   562→          <div className="flex flex-col gap-3">
+   563→            <label className="text-xs text-[#8888a0] font-medium">Project Name</label>
+   564→            <AnimatedInput
+   565→              placeholder="e.g., Customer Support Bot"
+   566→              value={newProjectName}
+   567→              onChange={(e) => setNewProjectName(e.target.value)}
+   568→              onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
+   569→            />
+   570→            <label className="text-xs text-[#8888a0] font-medium mt-1">Description (optional)</label>
+   571→            <AnimatedTextarea
+   572→              placeholder="What is this project about?"
+   573→              value={newProjectDesc}
+   574→              onChange={(e) => setNewProjectDesc(e.target.value)}
+   575→              className="min-h-[80px]"
+   576→            />
+   577→          </div>
+   578→          <div className="flex items-center gap-2 justify-end">
+   579→            <GlowButton variant="ghost" onClick={() => setView(projects.length > 0 ? 'list' : 'list')}>
+   580→              Cancel
+   581→            </GlowButton>
+   582→            <GlowButton
+   583→              variant="primary"
+   584→              onClick={handleCreateProject}
+   585→              disabled={!newProjectName.trim()}
+   586→            >
+   587→              <Plus className="w-4 h-4" /> Create Project
+   588→            </GlowButton>
+   589→          </div>
+   590→        </GlassCardStatic>
+   591→      </GradientBorder>
+   592→    </motion.div>
+   593→  );
+   594→
+   595→  // ── Render: Create version ──
+   596→  const renderCreateVersion = () => (
+   597→    <motion.div
+   598→      initial={{ opacity: 0, y: 12 }}
+   599→      animate={{ opacity: 1, y: 0 }}
+   600→      className="max-w-2xl mx-auto"
+   601→    >
+   602→      <GradientBorder color="purple">
+   603→        <GlassCardStatic className="p-6 flex flex-col gap-5">
+   604→          <div className="flex items-center gap-3">
+   605→            <div className="w-10 h-10 rounded-xl bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center text-[#a78bfa]">
+   606→              <GitBranch className="w-5 h-5" />
+   607→            </div>
+   608→            <div>
+   609→              <h2 className="text-base font-semibold text-[#f0f0f5]">New Version</h2>
+   610→              <p className="text-xs text-[#55556a]">
+   611→                {selectedProject?.name} — v{(selectedProject?.versions?.[0]?.version ?? 0) + 1}
+   612→              </p>
+   613→            </div>
+   614→          </div>
+   615→          <div className="flex flex-col gap-3">
+   616→            <label className="text-xs text-[#8888a0] font-medium">Title</label>
+   617→            <AnimatedInput
+   618→              placeholder="e.g., Improve clarity, add instructions"
+   619→              value={newVersionTitle}
+   620→              onChange={(e) => setNewVersionTitle(e.target.value)}
+   621→            />
+   622→            <label className="text-xs text-[#8888a0] font-medium">Prompt Content</label>
+   623→            <AnimatedTextarea
+   624→              placeholder="Write your prompt here... Use {{variable_name}} for variables."
+   625→              value={newVersionContent}
+   626→              onChange={(e) => {
+   627→                setNewVersionContent(e.target.value);
+   628→                // Auto-detect variables
+   629→                const detected = extractVariables(e.target.value);
+   630→                if (detected.length > 0 && !newVersionVariables) {
+   631→                  setNewVersionVariables(detected.join(', '));
+   632→                }
+   633→              }}
+   634→              size="lg"
+   635→              className="min-h-[200px] font-mono"
+   636→            />
+   637→            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+   638→              <div>
+   639→                <label className="text-xs text-[#8888a0] font-medium">Tags (comma separated)</label>
+   640→                <AnimatedInput
+   641→                  placeholder="e.g., production, v2"
+   642→                  value={newVersionTags}
+   643→                  onChange={(e) => setNewVersionTags(e.target.value)}
+   644→                  size="sm"
+   645→                />
+   646→              </div>
+   647→              <div>
+   648→                <label className="text-xs text-[#8888a0] font-medium">Variables (comma separated)</label>
+   649→                <AnimatedInput
+   650→                  placeholder="e.g., topic, tone, language"
+   651→                  value={newVersionVariables}
+   652→                  onChange={(e) => setNewVersionVariables(e.target.value)}
+   653→                  size="sm"
+   654→                />
+   655→              </div>
+   656→            </div>
+   657→            <label className="text-xs text-[#8888a0] font-medium">Notes (optional)</label>
+   658→            <AnimatedTextarea
+   659→              placeholder="What changed in this version?"
+   660→              value={newVersionNotes}
+   661→              onChange={(e) => setNewVersionNotes(e.target.value)}
+   662→              size="sm"
+   663→            />
+   664→          </div>
+   665→          <div className="flex items-center gap-2 justify-end">
+   666→            <GlowButton variant="ghost" onClick={() => setView('detail')}>
+   667→              Cancel
+   668→            </GlowButton>
+   669→            <GlowButton
+   670→              variant="primary"
+   671→              onClick={handleCreateVersion}
+   672→              disabled={!newVersionTitle.trim() || !newVersionContent.trim()}
+   673→            >
+   674→              <GitCommitHorizontal className="w-4 h-4" /> Save Version
+   675→            </GlowButton>
+   676→          </div>
+   677→        </GlassCardStatic>
+   678→      </GradientBorder>
+   679→    </motion.div>
+   680→  );
+   681→
+   682→  // ── Render: Version timeline item ──
+   683→  const renderVersionItem = (version: PromptVersion, isSelected: boolean) => (
+   684→    <motion.div
+   685→      key={version.id}
+   686→      initial={{ opacity: 0, x: -8 }}
+   687→      animate={{ opacity: 1, x: 0 }}
+   688→      transition={{ duration: 0.2 }}
+   689→      onClick={() => handleSelectVersion(version)}
+   690→      className={`relative flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all group ${
+   691→        isSelected
+   692→          ? 'bg-[rgba(139,92,246,0.08)] border border-[rgba(139,92,246,0.2)]'
+   693→          : 'hover:bg-[rgba(255,255,255,0.03)] border border-transparent'
+   694→      }`}
+   695→    >
+   696→      {/* Timeline dot + line */}
+   697→      <div className="flex flex-col items-center pt-1.5">
+   698→        <div
+   699→          className={`w-2.5 h-2.5 rounded-full border-2 shrink-0 ${
+   700→            isSelected
+   701→              ? 'bg-[#a78bfa] border-[#a78bfa]'
+   702→              : 'bg-transparent border-[#333348] group-hover:border-[#55556a]'
+   703→          }`}
+   704→        />
+   705→        <div className="w-px flex-1 bg-[rgba(255,255,255,0.04)] mt-1" />
+   706→      </div>
+   707→      <div className="flex-1 min-w-0">
+   708→        <div className="flex items-center gap-2">
+   709→          <span className="text-xs font-mono text-[#a78bfa] font-medium">v{version.version}</span>
+   710→          <span className="text-xs text-[#f0f0f5] font-medium truncate">{version.title}</span>
+   711→        </div>
+   712→        <div className="flex items-center gap-2 mt-1">
+   713→          <Clock className="w-3 h-3 text-[#44445a]" />
+   714→          <span className="text-[10px] text-[#44445a]">{formatDate(version.createdAt)}</span>
+   715→        </div>
+   716→        {version.tags.length > 0 && (
+   717→          <div className="flex gap-1 mt-1.5 flex-wrap">
+   718→            {version.tags.slice(0, 3).map((tag) => (
+   719→              <ForgeBadge key={tag} variant="default" className="text-[10px]">
+   720→                {tag}
+   721→              </ForgeBadge>
+   722→            ))}
+   723→            {version.tags.length > 3 && (
+   724→              <ForgeBadge variant="default" className="text-[10px]">
+   725→                +{version.tags.length - 3}
+   726→              </ForgeBadge>
+   727→            )}
+   728→          </div>
+   729→        )}
+   730→      </div>
+   731→    </motion.div>
+   732→  );
+   733→
+   734→  // ── Render: Project detail ──
+   735→  const renderProjectDetail = () => {
+   736→    if (!selectedProject) return null;
+   737→
+   738→    const versions = selectedProject.versions || [];
+   739→    const isComparing = compareVersion !== null && selectedVersion !== null && compareVersion.id !== selectedVersion.id;
+   740→
+   741→    return (
+   742→      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col gap-4 h-full">
+   743→        {/* Project header bar */}
+   744→        <div className="flex items-center justify-between">
+   745→          <div className="flex items-center gap-3">
+   746→            <GlowButton variant="ghost" size="sm" onClick={() => setView('list')}>
+   747→              <ArrowLeft className="w-4 h-4" />
+   748→            </GlowButton>
+   749→            <div>
+   750→              <h2 className="text-sm font-semibold text-[#f0f0f5]">{selectedProject.name}</h2>
+   751→              {selectedProject.description && (
+   752→                <p className="text-xs text-[#55556a]">{selectedProject.description}</p>
+   753→              )}
+   754→            </div>
+   755→            <ForgeBadge variant="purple" className="ml-1">
+   756→              <GitCommitHorizontal className="w-2.5 h-2.5" />
+   757→              {versions.length} versions
+   758→            </ForgeBadge>
+   759→          </div>
+   760→          <div className="flex items-center gap-2">
+   761→            <GlowButton variant="secondary" size="sm" onClick={() => setView('create-version')}>
+   762→              <Plus className="w-3.5 h-3.5" /> New Version
+   763→            </GlowButton>
+   764→            <GlowButton
+   765→              variant="ghost"
+   766→              size="sm"
+   767→              className="text-red-400 hover:text-red-300"
+   768→              onClick={() =>
+   769→                setDeleteTarget({ type: 'project', id: selectedProject.id, name: selectedProject.name })
+   770→              }
+   771→            >
+   772→              <Trash2 className="w-3.5 h-3.5" />
+   773→            </GlowButton>
+   774→          </div>
+   775→        </div>
+   776→
+   777→        {versions.length === 0 ? (
+   778→          <EmptyState
+   779→            icon={<GitBranch className="w-12 h-12" />}
+   780→            title="No versions yet"
+   781→            description="Create your first prompt version to get started."
+   782→            action={
+   783→              <GlowButton onClick={() => setView('create-version')} variant="primary" size="sm">
+   784→                <Plus className="w-4 h-4" /> Create First Version
+   785→              </GlowButton>
+   786→            }
+   787→          />
+   788→        ) : (
+   789→          <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 flex-1 min-h-0">
+   790→            {/* Left: Version Timeline */}
+   791→            <GlassCardStatic className="p-3 flex flex-col min-h-[400px] max-h-[calc(100vh-16rem)]">
+   792→              <div className="flex items-center justify-between mb-3 px-1">
+   793→                <span className="text-xs font-medium text-[#8888a0]">Version History</span>
+   794→                {isComparing && (
+   795→                  <GlowButton variant="ghost" size="sm" onClick={() => setCompareVersion(null)}>
+   796→                    <X className="w-3 h-3" /> Clear Compare
+   797→                  </GlowButton>
+   798→                )}
+   799→              </div>
+   800→              <ScrollArea className="flex-1">
+   801→                <div className="flex flex-col gap-1">
+   802→                  {versions.map((v) => (
+   803→                    <div key={v.id} className="relative">
+   804→                      {renderVersionItem(v, v.id === selectedVersion?.id)}
+   805→                      {/* Compare button on hover */}
+   806→                      {selectedVersion && v.id !== selectedVersion.id && (
+   807→                        <button
+   808→                          onClick={(e) => {
+   809→                            e.stopPropagation();
+   810→                            setCompareVersion(v);
+   811→                          }}
+   812→                          className={`absolute right-2 top-3 p-1 rounded text-[#44445a] hover:text-[#22d3ee] hover:bg-[rgba(6,182,212,0.1)] opacity-0 group-hover:opacity-100 transition-all text-[10px] ${
+   813→                            compareVersion?.id === v.id
+   814→                              ? '!opacity-100 !text-[#22d3ee] !bg-[rgba(6,182,212,0.1)]'
+   815→                              : ''
+   816→                          }`}
+   817→                          title="Compare with this version"
+   818→                        >
+   819→                          <GitCompareArrows className="w-3 h-3" />
+   820→                        </button>
+   821→                      )}
+   822→                    </div>
+   823→                  ))}
+   824→                </div>
+   825→              </ScrollArea>
+   826→            </GlassCardStatic>
+   827→
+   828→            {/* Right: Version Detail / Compare */}
+   829→            <div className="flex flex-col gap-4 min-w-0">
+   830→              <AnimatePresence mode="wait">
+   831→                {isComparing ? (
+   832→                  <motion.div
+   833→                    key="compare"
+   834→                    initial={{ opacity: 0, y: 8 }}
+   835→                    animate={{ opacity: 1, y: 0 }}
+   836→                    exit={{ opacity: 0, y: -8 }}
+   837→                  >
+   838→                    <GlassCard className="p-5">
+   839→                      <div className="flex items-center gap-2 mb-4">
+   840→                        <GitCompareArrows className="w-4 h-4 text-[#22d3ee]" />
+   841→                        <span className="text-sm font-medium text-[#f0f0f5]">Version Comparison</span>
+   842→                      </div>
+   843→                      <DiffView
+   844→                        left={compareVersion.version > selectedVersion.version ? selectedVersion : compareVersion}
+   845→                        right={compareVersion.version > selectedVersion.version ? compareVersion : selectedVersion}
+   846→                      />
+   847→                    </GlassCard>
+   848→                  </motion.div>
+   849→                ) : selectedVersion ? (
+   850→                  <motion.div
+   851→                    key={selectedVersion.id}
+   852→                    initial={{ opacity: 0, y: 8 }}
+   853→                    animate={{ opacity: 1, y: 0 }}
+   854→                    exit={{ opacity: 0, y: -8 }}
+   855→                    className="flex flex-col gap-4"
+   856→                  >
+   857→                    {/* Version header */}
+   858→                    <GlassCard className="p-4">
+   859→                      <div className="flex items-start justify-between gap-3">
+   860→                        <div className="flex-1 min-w-0">
+   861→                          <div className="flex items-center gap-2 mb-1">
+   862→                            <ForgeBadge variant="purple">v{selectedVersion.version}</ForgeBadge>
+   863→                            <h3 className="text-sm font-semibold text-[#f0f0f5] truncate">
+   864→                              {selectedVersion.title}
+   865→                            </h3>
+   866→                          </div>
+   867→                          <div className="flex items-center gap-3 text-[10px] text-[#55556a]">
+   868→                            <span className="flex items-center gap-1">
+   869→                              <Clock className="w-3 h-3" /> {formatDate(selectedVersion.createdAt)}
+   870→                            </span>
+   871→                            {selectedVersion.parentId && (
+   872→                              <span className="flex items-center gap-1">
+   873→                                <RotateCcw className="w-3 h-3" /> rolled back
+   874→                              </span>
+   875→                            )}
+   876→                          </div>
+   877→                          {selectedVersion.notes && (
+   878→                            <p className="text-xs text-[#8888a0] mt-2 bg-[rgba(255,255,255,0.02)] p-2 rounded-md">
+   879→                              {selectedVersion.notes}
+   880→                            </p>
+   881→                          )}
+   882→                          {selectedVersion.tags.length > 0 && (
+   883→                            <div className="flex gap-1 mt-2 flex-wrap">
+   884→                              {selectedVersion.tags.map((tag) => (
+   885→                                <ForgeBadge key={tag} variant="cyan" className="text-[10px]">
+   886→                                  {tag}
+   887→                                </ForgeBadge>
+   888→                              ))}
+   889→                            </div>
+   890→                          )}
+   891→                          {selectedVersion.variables.length > 0 && (
+   892→                            <div className="flex gap-1 mt-2 flex-wrap">
+   893→                              <span className="text-[10px] text-[#55556a] mr-1 self-center">Variables:</span>
+   894→                              {selectedVersion.variables.map((v) => (
+   895→                                <ForgeBadge key={v} variant="purple" className="text-[10px] font-mono">
+   896→                                  {`{{${v}}}`}
+   897→                                </ForgeBadge>
+   898→                              ))}
+   899→                            </div>
+   900→                          )}
+   901→                        </div>
+   902→                        {/* Actions */}
+   903→                        <div className="flex items-center gap-1 shrink-0">
+   904→                          <GlowButton
+   905→                            variant="ghost"
+   906→                            size="icon"
+   907→                            className="h-8 w-8"
+   908→                            onClick={() => handleCopy(selectedVersion.content, selectedVersion.id)}
+   909→                            title="Copy prompt"
+   910→                          >
+   911→                            {copiedId === selectedVersion.id ? (
+   912→                              <Check className="w-3.5 h-3.5 text-[#4ade80]" />
+   913→                            ) : (
+   914→                              <Copy className="w-3.5 h-3.5" />
+   915→                            )}
+   916→                          </GlowButton>
+   917→                          <DropdownMenu>
+   918→                            <DropdownMenuTrigger asChild>
+   919→                              <GlowButton variant="ghost" size="icon" className="h-8 w-8">
+   920→                                <ChevronDown className="w-3.5 h-3.5" />
+   921→                              </GlowButton>
+   922→                            </DropdownMenuTrigger>
+   923→                            <DropdownMenuContent
+   924→                              align="end"
+   925→                              className="bg-[#12121a] border-[rgba(255,255,255,0.06)]"
+   926→                            >
+   927→                              <DropdownMenuItem onClick={() => handleRollback(selectedVersion)}>
+   928→                                <RotateCcw className="w-3.5 h-3.5" />
+   929→                                Rollback to this version
+   930→                              </DropdownMenuItem>
+   931→                              <DropdownMenuItem onClick={() => handleExport(selectedVersion, 'markdown')}>
+   932→                                <Download className="w-3.5 h-3.5" />
+   933→                                Export as Markdown
+   934→                              </DropdownMenuItem>
+   935→                              <DropdownMenuItem onClick={() => handleExport(selectedVersion, 'text')}>
+   936→                                <FileText className="w-3.5 h-3.5" />
+   937→                                Export as Text
+   938→                              </DropdownMenuItem>
+   939→                              <DropdownMenuSeparator />
+   940→                              <DropdownMenuItem
+   941→                                variant="destructive"
+   942→                                onClick={() =>
+   943→                                  setDeleteTarget({
+   944→                                    type: 'version',
+   945→                                    id: selectedVersion.id,
+   946→                                    name: `v${selectedVersion.version}: ${selectedVersion.title}`,
+   947→                                  })
+   948→                                }
+   949→                              >
+   950→                                <Trash2 className="w-3.5 h-3.5" />
+   951→                                Delete Version
+   952→                              </DropdownMenuItem>
+   953→                            </DropdownMenuContent>
+   954→                          </DropdownMenu>
+   955→                        </div>
+   956→                      </div>
+   957→                    </GlassCard>
+   958→
+   959→                    {/* Prompt content */}
+   960→                    <GlassCard className="p-0 overflow-hidden">
+   961→                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)]">
+   962→                        <div className="flex items-center gap-2">
+   963→                          <span className="text-xs text-[#8888a0] font-medium">Prompt Content</span>
+   964→                        </div>
+   965→                        <GlowButton
+   966→                          variant="primary"
+   967→                          size="sm"
+   968→                          onClick={handleTest}
+   969→                          disabled={testing}
+   970→                        >
+   971→                          {testing ? (
+   972→                            <>
+   973→                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+   974→                              Testing...
+   975→                            </>
+   976→                          ) : (
+   977→                            <>
+   978→                              <Play className="w-3.5 h-3.5" />
+   979→                              Test with AI
+   980→                            </>
+   981→                          )}
+   982→                        </GlowButton>
+   983→                      </div>
+   984→                      <div className="p-4 max-h-[400px] overflow-auto">
+   985→                        <PromptContent content={selectedVersion.content} />
+   986→                      </div>
+   987→                    </GlassCard>
+   988→
+   989→                    {/* AI Response panel */}
+   990→                    {(latestAiResponse || aiResponses.length > 0) && (
+   991→                      <GlassCard className="p-0 overflow-hidden">
+   992→                        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)]">
+   993→                          <div className="flex items-center gap-2">
+   994→                            <MessageSquare className="w-3.5 h-3.5 text-[#22d3ee]" />
+   995→                            <span className="text-xs text-[#8888a0] font-medium">AI Response</span>
+   996→                          </div>
+   997→                          {aiResponses.length > 1 && (
+   998→                            <ForgeBadge variant="cyan">
+   999→                              {aiResponses.length} responses
+  1000→                            </ForgeBadge>
+  1001→                          )}
+  1002→                        </div>
+  1003→                        <Tabs defaultValue="latest" className="w-full">
+  1004→                          <div className="px-4 pt-2">
+  1005→                            <TabsList className="bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.06)] h-8">
+  1006→                              <TabsTrigger value="latest" className="text-xs h-6 px-3">
+  1007→                                Latest
+  1008→                              </TabsTrigger>
+  1009→                              {aiResponses.length > 1 && (
+  1010→                                <TabsTrigger value="history" className="text-xs h-6 px-3">
+  1011→                                  History ({aiResponses.length})
+  1012→                                </TabsTrigger>
+  1013→                              )}
+  1014→                            </TabsList>
+  1015→                          </div>
+  1016→                          <TabsContent value="latest" className="px-4 pb-4 pt-2">
+  1017→                            {testing ? (
+  1018→                              <div className="flex items-center gap-2 py-8 justify-center">
+  1019→                                <Loader2 className="w-4 h-4 animate-spin text-[#a78bfa]" />
+  1020→                                <span className="text-sm text-[#8888a0]">Generating response...</span>
+  1021→                              </div>
+  1022→                            ) : latestAiResponse ? (
+  1023→                              <div className="flex flex-col gap-2">
+  1024→                                <div className="flex items-center gap-3 text-[10px] text-[#55556a]">
+  1025→                                  <span>{formatDate(latestAiResponse.createdAt)}</span>
+  1026→                                  {latestAiResponse.model && (
+  1027→                                    <ForgeBadge variant="default">{latestAiResponse.model}</ForgeBadge>
+  1028→                                  )}
+  1029→                                  {latestAiResponse.tokens && (
+  1030→                                    <span>{latestAiResponse.tokens} tokens</span>
+  1031→                                  )}
+  1032→                                </div>
+  1033→                                <div className="rounded-lg bg-[rgba(0,0,0,0.2)] p-3 max-h-[300px] overflow-auto">
+  1034→                                  <div className="text-sm text-[#c0c0d0] whitespace-pre-wrap leading-relaxed">
+  1035→                                    {latestAiResponse.response}
+  1036→                                  </div>
+  1037→                                </div>
+  1038→                                <div className="flex justify-end">
+  1039→                                  <GlowButton
+  1040→                                    variant="ghost"
+  1041→                                    size="sm"
+  1042→                                    onClick={() => handleCopy(latestAiResponse.response, `resp-${latestAiResponse.id}`)}
+  1043→                                  >
+  1044→                                    {copiedId === `resp-${latestAiResponse.id}` ? (
+  1045→                                      <><Check className="w-3 h-3 text-[#4ade80]" /> Copied</>
+  1046→                                    ) : (
+  1047→                                      <><Copy className="w-3 h-3" /> Copy Response</>
+  1048→                                    )}
+  1049→                                  </GlowButton>
+  1050→                                </div>
+  1051→                              </div>
+  1052→                            ) : (
+  1053→                              <p className="text-xs text-[#55556a] py-4 text-center">
+  1054→                                Click &quot;Test with AI&quot; to generate a response.
+  1055→                              </p>
+  1056→                            )}
+  1057→                          </TabsContent>
+  1058→                          <TabsContent value="history" className="px-4 pb-4 pt-2">
+  1059→                            <ScrollArea className="max-h-[300px]">
+  1060→                              <div className="flex flex-col gap-2">
+  1061→                                {aiResponses.map((resp) => (
+  1062→                                  <div
+  1063→                                    key={resp.id}
+  1064→                                    className="p-3 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]"
+  1065→                                  >
+  1066→                                    <div className="flex items-center gap-2 text-[10px] text-[#55556a] mb-1.5">
+  1067→                                      <span>{formatDate(resp.createdAt)}</span>
+  1068→                                      {resp.model && (
+  1069→                                        <ForgeBadge variant="default">{resp.model}</ForgeBadge>
+  1070→                                      )}
+  1071→                                    </div>
+  1072→                                    <div className="text-xs text-[#8888a0] whitespace-pre-wrap line-clamp-4 leading-relaxed">
+  1073→                                      {resp.response}
+  1074→                                    </div>
+  1075→                                    <div className="flex justify-end mt-1.5">
+  1076→                                      <GlowButton
+  1077→                                        variant="ghost"
+  1078→                                        size="sm"
+  1079→                                        onClick={() => handleCopy(resp.response, `resp-${resp.id}`)}
+  1080→                                        className="h-6 text-[10px]"
+  1081→                                      >
+  1082→                                        {copiedId === `resp-${resp.id}` ? (
+  1083→                                          <><Check className="w-2.5 h-2.5 text-[#4ade80]" /></>
+  1084→                                        ) : (
+  1085→                                          <><Copy className="w-2.5 h-2.5" /> Copy</>
+  1086→                                        )}
+  1087→                                      </GlowButton>
+  1088→                                    </div>
+  1089→                                  </div>
+  1090→                                ))}
+  1091→                              </div>
+  1092→                            </ScrollArea>
+  1093→                          </TabsContent>
+  1094→                        </Tabs>
+  1095→                      </GlassCard>
+  1096→                    )}
+  1097→                  </motion.div>
+  1098→                ) : null}
+  1099→              </AnimatePresence>
+  1100→            </div>
+  1101→          </div>
+  1102→        )}
+  1103→      </motion.div>
+  1104→    );
+  1105→  };
+  1106→
+  1107→  // ── Render: Delete confirmation dialog ──
+  1108→  const renderDeleteDialog = () => (
+  1109→    <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+  1110→      <DialogContent className="bg-[#12121a] border-[rgba(255,255,255,0.06)] max-w-md">
+  1111→        <DialogHeader>
+  1112→          <DialogTitle className="text-[#f0f0f5]">
+  1113→            Delete {deleteTarget?.type === 'project' ? 'Project' : 'Version'}?
+  1114→          </DialogTitle>
+  1115→          <DialogDescription className="text-[#8888a0]">
+  1116→            {deleteTarget?.type === 'project'
+  1117→              ? `This will permanently delete "${deleteTarget?.name}" and all its versions. This action cannot be undone.`
+  1118→              : `This will permanently delete "${deleteTarget?.name}". This action cannot be undone.`}
+  1119→          </DialogDescription>
+  1120→        </DialogHeader>
+  1121→        <DialogFooter className="gap-2">
+  1122→          <GlowButton variant="ghost" onClick={() => setDeleteTarget(null)}>
+  1123→            Cancel
+  1124→          </GlowButton>
+  1125→          <GlowButton
+  1126→            variant="destructive"
+  1127→            onClick={deleteTarget?.type === 'project' ? handleDeleteProject : handleDeleteVersion}
+  1128→          >
+  1129→            <Trash2 className="w-4 h-4" /> Delete
+  1130→          </GlowButton>
+  1131→        </DialogFooter>
+  1132→      </DialogContent>
+  1133→    </Dialog>
+  1134→  );
+  1135→
+  1136→  // ── Error toast ──
+  1137→  const renderError = () =>
+  1138→    error && (
+  1139→      <motion.div
+  1140→        initial={{ opacity: 0, y: -8 }}
+  1141→        animate={{ opacity: 1, y: 0 }}
+  1142→        exit={{ opacity: 0, y: -8 }}
+  1143→        className="fixed top-20 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm max-w-sm"
+  1144→      >
+  1145→        <AlertCircle className="w-4 h-4 shrink-0" />
+  1146→        <span className="flex-1">{error}</span>
+  1147→        <button onClick={() => setError(null)} className="ml-2 hover:text-red-300">
+  1148→          <X className="w-3.5 h-3.5" />
+  1149→        </button>
+  1150→      </motion.div>
+  1151→    );
+  1152→
+  1153→  return (
+  1154→    <WorkspaceLayout>
+  1155→      {renderError()}
+  1156→      {view === 'list' && (
+  1157→        <div className="flex flex-col gap-4">
+  1158→          <div className="flex items-center justify-between">
+  1159→            <h2 className="text-sm text-[#8888a0]">
+  1160→              {projects.length} {projects.length === 1 ? 'project' : 'projects'}
+  1161→            </h2>
+  1162→            <GlowButton variant="primary" size="sm" onClick={() => setView('create-project')}>
+  1163→              <Plus className="w-3.5 h-3.5" /> New Project
+  1164→            </GlowButton>
+  1165→          </div>
+  1166→          {renderProjectList()}
+  1167→        </div>
+  1168→      )}
+  1169→      {view === 'create-project' && renderCreateProject()}
+  1170→      {view === 'detail' && renderProjectDetail()}
+  1171→      {view === 'create-version' && renderCreateVersion()}
+  1172→      {renderDeleteDialog()}
+  1173→    </WorkspaceLayout>
+  1174→  );
+  1175→}

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
 import { GlassCard } from '@/components/forge/GlassCard';
 import { GlowButton } from '@/components/forge/GlowButton';
+import { useToast } from '@/hooks/use-toast';
 import { AnimatedInput } from '@/components/forge/AnimatedInput';
 import { ForgeBadge } from '@/components/forge/ForgeBadge';
 import { ShimmerCard } from '@/components/forge/Shimmer';
@@ -211,6 +212,7 @@ export default function FirebaseAnalyzer() {
   const [loadingReports, setLoadingReports] = useState(false);
   const [viewingReport, setViewingReport] = useState<ViewReportData | null>(null);
   const [loadingViewReport, setLoadingViewReport] = useState(false);
+  const { toast } = useToast();
 
   // Update a nested field
   const updateField = useCallback(
@@ -241,8 +243,9 @@ export default function FirebaseAnalyzer() {
         auth: data.auth || prev.auth,
         hosting: data.hosting || prev.hosting,
       }));
+      toast({ title: 'Sample data loaded', description: `Project: ${data.name}` });
     } catch {
-      // silent
+      toast({ title: 'Failed to load sample', variant: 'destructive' });
     } finally {
       setLoadingSample(false);
     }
@@ -261,13 +264,14 @@ export default function FirebaseAnalyzer() {
       });
       const data = await res.json();
       if (data.error) {
+        toast({ title: 'Analysis failed', description: data.error, variant: 'destructive' });
         setResult(null);
         return;
       }
       setResult(data);
       setActiveTab('results');
     } catch {
-      // silent
+      toast({ title: 'Analysis failed', description: 'Network error — please try again.', variant: 'destructive' });
     } finally {
       setAnalyzing(false);
     }
@@ -281,7 +285,7 @@ export default function FirebaseAnalyzer() {
       const data = await res.json();
       setReports(data);
     } catch {
-      // silent
+      toast({ title: 'Failed to load reports', variant: 'destructive' });
     } finally {
       setLoadingReports(false);
     }
@@ -293,7 +297,10 @@ export default function FirebaseAnalyzer() {
     try {
       const res = await fetch(`/api/firebase-analyzer/reports/${id}`);
       const data = await res.json();
-      if (data.error) return;
+      if (data.error) {
+        toast({ title: 'Failed to load report', variant: 'destructive' });
+        return;
+      }
 
       const reportResult: AnalysisResult = {
         id: data.id,
@@ -313,7 +320,7 @@ export default function FirebaseAnalyzer() {
       setViewingReport(data);
       setActiveTab('results');
     } catch {
-      // silent
+      toast({ title: 'Failed to load report', variant: 'destructive' });
     } finally {
       setLoadingViewReport(false);
     }
@@ -322,10 +329,14 @@ export default function FirebaseAnalyzer() {
   // Delete a report
   const deleteReport = async (id: string) => {
     try {
-      await fetch(`/api/firebase-analyzer/reports/${id}`, { method: 'DELETE' });
-      setReports((prev) => prev.filter((r) => r.id !== id));
+      const res = await fetch(`/api/firebase-analyzer/reports/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setReports((prev) => prev.filter((r) => r.id !== id));
+        if (viewingReport?.id === id) setViewingReport(null);
+        toast({ title: 'Report deleted' });
+      }
     } catch {
-      // silent
+      toast({ title: 'Failed to delete report', variant: 'destructive' });
     }
   };
 

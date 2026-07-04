@@ -24,6 +24,7 @@ import {
   GitCommitHorizontal,
   MessageSquare,
   ChevronDown,
+  Send,
 } from 'lucide-react';
 import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
 import { GlassCard } from '@/components/forge/GlassCard';
@@ -197,6 +198,8 @@ export default function PromptManager() {
   const [testing, setTesting] = useState(false);
   const [latestAiResponse, setLatestAiResponse] = useState<AiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [testVariables, setTestVariables] = useState<Record<string, string>>({});
+  const [showTestPanel, setShowTestPanel] = useState(false);
 
   // Create project form
   const [newProjectName, setNewProjectName] = useState('');
@@ -374,6 +377,19 @@ export default function PromptManager() {
     }
   };
 
+  // ── Extract variables from version ──
+  const currentVariables = useMemo(() => {
+    if (!selectedVersion) return [];
+    return selectedVersion.variables || [];
+  }, [selectedVersion]);
+
+  // ── Reset test variables when version changes ──
+  useEffect(() => {
+    setTestVariables({});
+    setShowTestPanel(false);
+    setLatestAiResponse(null);
+  }, [selectedVersion?.id]);
+
   // ── Test prompt ──
   const handleTest = async () => {
     if (!selectedVersion || testing) return;
@@ -383,13 +399,18 @@ export default function PromptManager() {
     try {
       const res = await fetch(`/api/prompt-manager/versions/${selectedVersion.id}/test`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ variables: testVariables }),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Failed to test prompt' }));
+        throw new Error(err.error);
+      }
       const data = await res.json();
       setLatestAiResponse(data);
       setAiResponses((prev) => [data, ...prev]);
-    } catch {
-      setError('Failed to test prompt');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to test prompt');
     } finally {
       setTesting(false);
     }
@@ -961,11 +982,20 @@ export default function PromptManager() {
                       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)]">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-[#8888a0] font-medium">Prompt Content</span>
+                          {currentVariables.length > 0 && (
+                            <ForgeBadge variant="purple">{currentVariables.length} variable{currentVariables.length !== 1 ? 's' : ''}</ForgeBadge>
+                          )}
                         </div>
                         <GlowButton
                           variant="primary"
                           size="sm"
-                          onClick={handleTest}
+                          onClick={() => {
+                            if (currentVariables.length > 0) {
+                              setShowTestPanel(!showTestPanel);
+                            } else {
+                              handleTest();
+                            }
+                          }}
                           disabled={testing}
                         >
                           {testing ? (
@@ -976,11 +1006,68 @@ export default function PromptManager() {
                           ) : (
                             <>
                               <Play className="w-3.5 h-3.5" />
-                              Test with AI
+                              {currentVariables.length > 0 ? (showTestPanel ? 'Hide Variables' : 'Test with AI') : 'Test with AI'}
                             </>
                           )}
                         </GlowButton>
                       </div>
+
+                      {/* Variable fill-in panel */}
+                      {showTestPanel && currentVariables.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="px-4 py-3 border-b border-[rgba(255,255,255,0.06)] bg-[rgba(139,92,246,0.03)]"
+                        >
+                          <div className="flex items-center gap-2 mb-2.5">
+                            <Tag className="w-3.5 h-3.5 text-[#a78bfa]" />
+                            <span className="text-xs text-[#8888a0] font-medium">Fill in variables</span>
+                            <span className="text-[10px] text-[#55556a]">(leave blank for defaults)</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {currentVariables.map((varName) => (
+                              <div key={varName} className="flex flex-col gap-1">
+                                <label className="text-[11px] text-[#55556a] font-mono">{`{{${varName}}}`}</label>
+                                <input
+                                  type="text"
+                                  value={testVariables[varName] || ''}
+                                  onChange={(e) =>
+                                    setTestVariables((prev) => ({ ...prev, [varName]: e.target.value }))
+                                  }
+                                  placeholder={`Enter ${varName}...`}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !testing) handleTest();
+                                  }}
+                                  className="w-full h-8 px-3 rounded-lg bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.06)] text-sm text-[#f0f0f5] placeholder:text-[#44445a] focus:outline-none focus:border-[#8b5cf6]/50 focus:ring-1 focus:ring-[#8b5cf6]/20 transition-all duration-200"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex justify-end mt-3">
+                            <GlowButton
+                              variant="primary"
+                              size="sm"
+                              onClick={handleTest}
+                              disabled={testing}
+                              className="gap-1.5"
+                            >
+                              {testing ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  Testing...
+                                </>
+                              ) : (
+                                <>
+                                  <Send className="w-3.5 h-3.5" />
+                                  Run Test
+                                </>
+                              )}
+                            </GlowButton>
+                          </div>
+                        </motion.div>
+                      )}
+
                       <div className="p-4 max-h-[400px] overflow-auto">
                         <PromptContent content={selectedVersion.content} />
                       </div>

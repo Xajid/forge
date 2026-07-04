@@ -12,7 +12,7 @@ export async function GET(
     const project = await db.promptProject.findUnique({
       where: { id },
       include: {
-        PromptVersion: {
+        versions: {
           orderBy: { version: 'desc' },
         },
       },
@@ -22,7 +22,7 @@ export async function GET(
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
 
-    const versions = project.PromptVersion.map((v) => ({
+    const versions = project.versions.map((v) => ({
       id: v.id,
       projectId: v.projectId,
       title: v.title,
