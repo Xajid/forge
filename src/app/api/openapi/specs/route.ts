@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import yaml from 'js-yaml';
-
+import * as yaml from 'js-yaml';
 interface OpenApiEndpoint {
   method: string;
   path: string;

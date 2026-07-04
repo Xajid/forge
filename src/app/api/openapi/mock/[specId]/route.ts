@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import yaml from 'js-yaml';
-
+import * as yaml from 'js-yaml';
 // ---- Fake data generators ----
 
 const FIRST_NAMES = ['Alice', 'Bob', 'Charlie', 'Diana', 'Ethan', 'Fiona', 'George', 'Hannah', 'Isaac', 'Julia', 'Kevin', 'Laura', 'Michael', 'Nina', 'Oscar', 'Patricia', 'Quinn', 'Rachel', 'Samuel', 'Tanya'];
