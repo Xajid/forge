@@ -356,3 +356,28 @@ Stage Summary:
 - Files created: src/app/api/prompt-manager/versions/[id]/test/route.ts
 - Files changed: prisma/schema.prisma, 3 API routes, PromptManager.tsx, FirebaseAnalyzer.tsx
 - All fixes browser-tested: project list loads, version creates, variables fill in, AI test returns response, toasts work
+---
+Task ID: 1
+Agent: Main Agent
+Task: Prepare Forge project for Vercel deployment
+
+Work Log:
+- Audited project for Vercel compatibility
+- Identified SQLite as blocking issue (ephemeral filesystem on Vercel serverless)
+- Installed @prisma/adapter-libsql and @libsql/client for Turso (cloud SQLite)
+- Updated prisma/schema.prisma: kept provider="sqlite" but added directUrl field for Turso adapter
+- Rewrote src/lib/db.ts to auto-detect Turso URLs (libsql://) and use adapter, fallback to local SQLite for dev
+- Simplified build script: removed standalone cp commands, added postinstall for prisma generate
+- Removed output:"standalone" and allowedDevOrigins from next.config.ts (Vercel manages its own output)
+- Created .env.example with Turso URL templates
+- Fixed .gitignore to allow .env.example through
+- Created vercel.json with build configuration
+- Verified no hardcoded localhost/filesystem writes/z-ai-web-dev-sdk client imports
+- Verified lint passes clean (0 errors)
+- Verified dev server responds 200
+
+Stage Summary:
+- Project is now Vercel-ready with Turso database adapter
+- Local dev still works with SQLite (file: URL auto-detected, uses plain PrismaClient)
+- Production on Vercel uses libSQL adapter with Turso (libsql:// URL auto-detected)
+- All environment variables documented in .env.example
