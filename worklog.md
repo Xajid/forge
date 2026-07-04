@@ -307,3 +307,23 @@ Stage Summary:
 - Recent tools and favorites tracking working
 - Clean codebase with zero lint errors
 - Dark glassmorphism design language consistent across all modules
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix API Recorder — add proper endpoint creation form with name & custom slug inputs
+
+Work Log:
+- Investigated the issue: NewEndpointPanel was auto-creating endpoints on mount with no user input
+- Rewrote NewEndpointPanel with: name input (required), auto-slug preview from name, custom slug toggle, Create button
+- Updated backend POST /api/recorder/endpoints to accept and validate custom slug parameter
+- Added slug validation (lowercase, numbers, hyphens only, 1-64 chars, no leading/trailing hyphens)
+- Added duplicate slug detection with 409 conflict response
+- Added empty name client-side validation
+- Browser-tested all flows: auto-slug, custom slug, duplicate error, empty name error
+
+Stage Summary:
+- File changed: /home/z/my-project/src/modules/api-recorder/ApiRecorder.tsx (NewEndpointPanel rewritten)
+- File changed: /home/z/my-project/src/app/api/recorder/endpoints/route.ts (slug validation added)
+- All 4 test cases passed: auto-slug generation, custom slug input, duplicate slug error, empty name validation
+- Lint passes clean

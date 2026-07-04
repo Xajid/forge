@@ -286,39 +286,58 @@ function NewEndpointPanel({
   onCreated: (ep: Endpoint) => void;
   onCancel: () => void;
 }) {
+  const [name, setName] = useState('');
+  const [customSlug, setCustomSlug] = useState('');
+  const [useCustomSlug, setUseCustomSlug] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<Endpoint | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const autoSlugPreview = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'my-endpoint';
 
   const handleCreate = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Please enter an endpoint name');
+      return;
+    }
+
+    const slug = useCustomSlug ? customSlug.trim() : autoSlugPreview;
+    if (!slug) {
+      setError('Endpoint path cannot be empty');
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(slug)) {
+      setError('Path must be lowercase letters, numbers, and hyphens only');
+      return;
+    }
+
     setCreating(true);
+    setError(null);
     try {
       const res = await fetch('/api/recorder/endpoints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ name: trimmedName, slug }),
       });
       if (res.ok) {
         const data = await res.json();
         setCreated(data);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.error || 'Failed to create endpoint');
       }
     } catch (err) {
       console.error('Failed to create endpoint:', err);
+      setError('Network error — please try again');
     } finally {
       setCreating(false);
     }
   };
-
-  useEffect(() => {
-    handleCreate();
-  }, []);
-
-  if (creating) {
-    return (
-      <GlassCard className="p-6">
-        <ShimmerCard className="border-0 bg-transparent" />
-      </GlassCard>
-    );
-  }
 
   if (created) {
     return (
@@ -371,7 +390,147 @@ function NewEndpointPanel({
     );
   }
 
-  return null;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <GlassCard className="p-6">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="w-8 h-8 rounded-lg bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center">
+            <Plus className="w-4 h-4 text-[#a78bfa]" />
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-[#f0f0f5]">
+              Create New Endpoint
+            </h3>
+            <p className="text-xs text-[#55556a]">
+              Set up a unique URL to record incoming HTTP requests
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {/* Endpoint Name */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-[#8888a0]">
+              Endpoint Name <span className="text-red-400">*</span>
+            </label>
+            <AnimatedInput
+              icon={<Link2 className="w-4 h-4" />}
+              placeholder="e.g. My Webhook, Production API, Staging Hook"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreate();
+              }}
+              autoFocus
+            />
+          </div>
+
+          {/* Custom Slug Toggle */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-[#8888a0]">
+                Custom Path
+              </label>
+              <button
+                onClick={() => setUseCustomSlug(!useCustomSlug)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  useCustomSlug
+                    ? 'bg-[#8b5cf6]'
+                    : 'bg-[rgba(255,255,255,0.1)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    useCustomSlug ? 'translate-x-4.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {useCustomSlug ? (
+              <div className="flex items-center gap-0 rounded-lg bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.06)] focus-within:border-[#8b5cf6]/50 focus-within:ring-1 focus-within:ring-[#8b5cf6]/20 transition-all">
+                <span className="pl-3 text-xs text-[#55556a] font-mono select-none whitespace-nowrap">
+                  /api/recorder/catch/
+                </span>
+                <input
+                  type="text"
+                  className="flex-1 bg-transparent text-sm text-[#f0f0f5] font-mono placeholder:text-[#55556a] focus:outline-none pr-3 py-2.5"
+                  placeholder="my-custom-path"
+                  value={customSlug}
+                  onChange={(e) => setCustomSlug(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreate();
+                  }}
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <div className="flex items-center gap-0 p-2.5 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]">
+                <span className="text-xs text-[#55556a] font-mono select-none whitespace-nowrap">
+                  /api/recorder/catch/
+                </span>
+                <span className="text-xs text-[#a78bfa] font-mono truncate">
+                  {autoSlugPreview}
+                </span>
+              </div>
+            )}
+
+            <p className="text-[11px] text-[#55556a]">
+              {useCustomSlug
+                ? 'Lowercase letters, numbers, and hyphens only. This will be part of your public recording URL.'
+                : 'Auto-generated from your endpoint name. Toggle to set a custom path.'}
+            </p>
+          </div>
+
+          {/* Error message */}
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.15)]"
+            >
+              <span className="text-xs text-red-400">{error}</span>
+            </motion.div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 pt-2">
+            <GlowButton
+              variant="primary"
+              size="sm"
+              onClick={handleCreate}
+              disabled={creating}
+              className="gap-1.5"
+            >
+              {creating ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-3.5 h-3.5" />
+                  Create Endpoint
+                </>
+              )}
+            </GlowButton>
+            <GlowButton
+              variant="ghost"
+              size="sm"
+              onClick={onCancel}
+              disabled={creating}
+            >
+              Cancel
+            </GlowButton>
+          </div>
+        </div>
+      </GlassCard>
+    </motion.div>
+  );
 }
 
 // Request card component

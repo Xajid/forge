@@ -10,15 +10,57 @@ function generateSlug(length = 8): string {
   return result
 }
 
+function isValidSlug(slug: string): boolean {
+  // Must be 1-64 chars, lowercase letters, numbers, hyphens; no leading/trailing hyphens
+  return /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$/.test(slug) && slug.length <= 64
+}
+
+function sanitizeSlug(slug: string): string {
+  return slug
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64)
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const name = body.name?.trim() || null
 
-    let slug = generateSlug()
-    // Ensure uniqueness
-    while (await db.requestEndpoint.findUnique({ where: { slug } })) {
+    let slug: string
+
+    if (body.slug?.trim()) {
+      // User provided a custom slug — sanitize and validate
+      const sanitized = sanitizeSlug(body.slug.trim())
+      if (!sanitized) {
+        return NextResponse.json(
+          { error: 'Invalid path: must contain at least one letter or number' },
+          { status: 400 }
+        )
+      }
+      if (!isValidSlug(sanitized)) {
+        return NextResponse.json(
+          { error: 'Invalid path: use lowercase letters, numbers, and hyphens only (no leading/trailing hyphens)' },
+          { status: 400 }
+        )
+      }
+      // Check uniqueness
+      const existing = await db.requestEndpoint.findUnique({ where: { slug: sanitized } })
+      if (existing) {
+        return NextResponse.json(
+          { error: `Path "/${sanitized}" is already taken — try a different one` },
+          { status: 409 }
+        )
+      }
+      slug = sanitized
+    } else {
+      // Auto-generate
       slug = generateSlug()
+      while (await db.requestEndpoint.findUnique({ where: { slug } })) {
+        slug = generateSlug()
+      }
     }
 
     const endpoint = await db.requestEndpoint.create({

@@ -1,0 +1,799 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback } from 'react';
+     4→import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
+     5→import { GlassCard } from '@/components/forge/GlassCard';
+     6→import { GlowButton } from '@/components/forge/GlowButton';
+     7→import { MethodBadge } from '@/components/forge/ForgeBadge';
+     8→import { StatusBadge } from '@/components/forge/ForgeBadge';
+     9→import { JsonViewer } from '@/components/forge/JsonViewer';
+    10→import { EmptyState } from '@/components/forge/EmptyState';
+    11→import { AnimatedInput } from '@/components/forge/AnimatedInput';
+    12→import { ShimmerCard } from '@/components/forge/Shimmer';
+    13→import { ScrollArea } from '@/components/ui/scroll-area';
+    14→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    15→import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+    16→import { motion, AnimatePresence } from 'framer-motion';
+    17→import {
+    18→  Radio,
+    19→  Plus,
+    20→  Copy,
+    21→  Check,
+    22→  Trash2,
+    23→  ArrowLeft,
+    24→  Search,
+    25→  Download,
+    26→  Link2,
+    27→  Clock,
+    28→  Globe,
+    29→  ChevronDown,
+    30→  Zap,
+    31→  BarChart3,
+    32→} from 'lucide-react';
+    33→
+    34→// Types
+    35→interface Endpoint {
+    36→  id: string;
+    37→  name: string;
+    38→  slug: string;
+    39→  url: string;
+    40→  isActive: boolean;
+    41→  createdAt: string;
+    42→  requestCount: number;
+    43→}
+    44→
+    45→interface RecordedRequest {
+    46→  id: string;
+    47→  method: string;
+    48→  path: string;
+    49→  headers: string;
+    50→  query: string | null;
+    51→  body: string | null;
+    52→  statusCode: number | null;
+    53→  responseTime: number | null;
+    54→  ipAddress: string | null;
+    55→  createdAt: string;
+    56→}
+    57→
+    58→// Animation variants
+    59→const containerVariants = {
+    60→  hidden: { opacity: 0 },
+    61→  show: {
+    62→    opacity: 1,
+    63→    transition: { staggerChildren: 0.06 },
+    64→  },
+    65→};
+    66→
+    67→const itemVariants = {
+    68→  hidden: { opacity: 0, y: 12 },
+    69→  show: { opacity: 1, y: 0, transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] } },
+    70→};
+    71→
+    72→function formatTimeAgo(dateStr: string): string {
+    73→  const now = new Date();
+    74→  const date = new Date(dateStr);
+    75→  const diffMs = now.getTime() - date.getTime();
+    76→  const diffSec = Math.floor(diffMs / 1000);
+    77→  const diffMin = Math.floor(diffSec / 60);
+    78→  const diffHr = Math.floor(diffMin / 60);
+    79→  const diffDay = Math.floor(diffHr / 24);
+    80→
+    81→  if (diffSec < 5) return 'just now';
+    82→  if (diffSec < 60) return `${diffSec}s ago`;
+    83→  if (diffMin < 60) return `${diffMin}m ago`;
+    84→  if (diffHr < 24) return `${diffHr}h ago`;
+    85→  return `${diffDay}d ago`;
+    86→}
+    87→
+    88→function formatTimestamp(dateStr: string): string {
+    89→  const d = new Date(dateStr);
+    90→  return d.toLocaleString('en-US', {
+    91→    month: 'short',
+    92→    day: 'numeric',
+    93→    hour: '2-digit',
+    94→    minute: '2-digit',
+    95→    second: '2-digit',
+    96→  });
+    97→}
+    98→
+    99→function safeParseJson(str: string | null): unknown {
+   100→  if (!str) return null;
+   101→  try {
+   102→    return JSON.parse(str);
+   103→  } catch {
+   104→    return str;
+   105→  }
+   106→}
+   107→
+   108→// Endpoint List View
+   109→function EndpointList({
+   110→  onSelect,
+   111→  onCreateNew,
+   112→}: {
+   113→  onSelect: (ep: Endpoint) => void;
+   114→  onCreateNew: () => void;
+   115→}) {
+   116→  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+   117→  const [loading, setLoading] = useState(true);
+   118→
+   119→  const fetchEndpoints = useCallback(async () => {
+   120→    try {
+   121→      const res = await fetch('/api/recorder/endpoints');
+   122→      if (res.ok) {
+   123→        const data = await res.json();
+   124→        setEndpoints(data);
+   125→      }
+   126→    } catch (err) {
+   127→      console.error('Failed to fetch endpoints:', err);
+   128→    } finally {
+   129→      setLoading(false);
+   130→    }
+   131→  }, []);
+   132→
+   133→  useEffect(() => {
+   134→    fetchEndpoints();
+   135→  }, [fetchEndpoints]);
+   136→
+   137→  const handleDelete = async (e: React.MouseEvent, id: string) => {
+   138→    e.stopPropagation();
+   139→    try {
+   140→      await fetch(`/api/recorder/endpoints/${id}`, { method: 'DELETE' });
+   141→      setEndpoints((prev) => prev.filter((ep) => ep.id !== id));
+   142→    } catch (err) {
+   143→      console.error('Failed to delete endpoint:', err);
+   144→    }
+   145→  };
+   146→
+   147→  if (loading) {
+   148→    return (
+   149→      <div className="grid gap-4 md:grid-cols-2">
+   150→        <ShimmerCard />
+   151→        <ShimmerCard />
+   152→        <ShimmerCard />
+   153→      </div>
+   154→    );
+   155→  }
+   156→
+   157→  if (endpoints.length === 0) {
+   158→    return (
+   159→      <EmptyState
+   160→        icon={<Radio className="w-12 h-12" />}
+   161→        title="No endpoints yet"
+   162→        description="Create your first endpoint to start recording HTTP requests. Each endpoint gets a unique URL you can share."
+   163→        action={
+   164→          <GlowButton variant="primary" onClick={onCreateNew}>
+   165→            <Plus className="w-4 h-4" />
+   166→            Create Endpoint
+   167→          </GlowButton>
+   168→        }
+   169→      />
+   170→    );
+   171→  }
+   172→
+   173→  return (
+   174→    <div>
+   175→      <div className="flex items-center justify-between mb-4">
+   176→        <p className="text-sm text-[#8888a0]">
+   177→          {endpoints.length} endpoint{endpoints.length !== 1 ? 's' : ''}
+   178→        </p>
+   179→        <GlowButton variant="primary" size="sm" onClick={onCreateNew}>
+   180→          <Plus className="w-4 h-4" />
+   181→          New Endpoint
+   182→        </GlowButton>
+   183→      </div>
+   184→
+   185→      <motion.div
+   186→        variants={containerVariants}
+   187→        initial="hidden"
+   188→        animate="show"
+   189→        className="grid gap-4 md:grid-cols-2"
+   190→      >
+   191→        {endpoints.map((ep) => (
+   192→          <motion.div key={ep.id} variants={itemVariants}>
+   193→            <GlassCard
+   194→              hover
+   195→              glow="purple"
+   196→              className="p-4 cursor-pointer group"
+   197→              onClick={() => onSelect(ep)}
+   198→            >
+   199→              <div className="flex items-start justify-between mb-3">
+   200→                <div className="flex items-center gap-2.5 min-w-0">
+   201→                  <div className="w-8 h-8 rounded-lg bg-[rgba(139,92,246,0.1)] border border-[rgba(139,92,246,0.2)] flex items-center justify-center flex-shrink-0">
+   202→                    <Link2 className="w-4 h-4 text-[#a78bfa]" />
+   203→                  </div>
+   204→                  <div className="min-w-0">
+   205→                    <h3 className="text-sm font-medium text-[#f0f0f5] truncate">
+   206→                      {ep.name}
+   207→                    </h3>
+   208→                    <p className="text-xs text-[#55556a] mt-0.5 truncate font-mono">
+   209→                      /{ep.slug}
+   210→                    </p>
+   211→                  </div>
+   212→                </div>
+   213→                <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+   214→                  <CopyUrlButton url={ep.url} />
+   215→                  <GlowButton
+   216→                    variant="ghost"
+   217→                    size="icon"
+   218→                    className="h-7 w-7 text-[#55556a] hover:text-red-400"
+   219→                    onClick={(e) => handleDelete(e, ep.id)}
+   220→                  >
+   221→                    <Trash2 className="w-3.5 h-3.5" />
+   222→                  </GlowButton>
+   223→                </div>
+   224→              </div>
+   225→
+   226→              <div className="flex items-center gap-3 text-xs text-[#55556a]">
+   227→                <span className="flex items-center gap-1">
+   228→                  <BarChart3 className="w-3 h-3" />
+   229→                  {ep.requestCount} request{ep.requestCount !== 1 ? 's' : ''}
+   230→                </span>
+   231→                <span className="flex items-center gap-1">
+   232→                  <Clock className="w-3 h-3" />
+   233→                  {formatTimeAgo(ep.createdAt)}
+   234→                </span>
+   235→                <span
+   236→                  className={`ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+   237→                    ep.isActive
+   238→                      ? 'bg-[rgba(34,197,94,0.1)] text-[#4ade80]'
+   239→                      : 'bg-[rgba(239,68,68,0.1)] text-[#f87171]'
+   240→                  }`}
+   241→                >
+   242→                  <span
+   243→                    className={`w-1.5 h-1.5 rounded-full ${
+   244→                      ep.isActive ? 'bg-[#4ade80]' : 'bg-[#f87171]'
+   245→                    }`}
+   246→                  />
+   247→                  {ep.isActive ? 'Active' : 'Inactive'}
+   248→                </span>
+   249→              </div>
+   250→            </GlassCard>
+   251→          </motion.div>
+   252→        ))}
+   253→      </motion.div>
+   254→    </div>
+   255→  );
+   256→}
+   257→
+   258→// Copy URL button
+   259→function CopyUrlButton({ url }: { url: string }) {
+   260→  const [copied, setCopied] = useState(false);
+   261→
+   262→  const handleCopy = (e: React.MouseEvent) => {
+   263→    e.stopPropagation();
+   264→    navigator.clipboard.writeText(url);
+   265→    setCopied(true);
+   266→    setTimeout(() => setCopied(false), 1500);
+   267→  };
+   268→
+   269→  return (
+   270→    <GlowButton
+   271→      variant="ghost"
+   272→      size="icon"
+   273→      className="h-7 w-7 text-[#55556a] hover:text-[#f0f0f5]"
+   274→      onClick={handleCopy}
+   275→    >
+   276→      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+   277→    </GlowButton>
+   278→  );
+   279→}
+   280→
+   281→// New endpoint creation panel
+   282→function NewEndpointPanel({
+   283→  onCreated,
+   284→  onCancel,
+   285→}: {
+   286→  onCreated: (ep: Endpoint) => void;
+   287→  onCancel: () => void;
+   288→}) {
+   289→  const [creating, setCreating] = useState(false);
+   290→  const [created, setCreated] = useState<Endpoint | null>(null);
+   291→
+   292→  const handleCreate = async () => {
+   293→    setCreating(true);
+   294→    try {
+   295→      const res = await fetch('/api/recorder/endpoints', {
+   296→        method: 'POST',
+   297→        headers: { 'Content-Type': 'application/json' },
+   298→        body: JSON.stringify({}),
+   299→      });
+   300→      if (res.ok) {
+   301→        const data = await res.json();
+   302→        setCreated(data);
+   303→      }
+   304→    } catch (err) {
+   305→      console.error('Failed to create endpoint:', err);
+   306→    } finally {
+   307→      setCreating(false);
+   308→    }
+   309→  };
+   310→
+   311→  useEffect(() => {
+   312→    handleCreate();
+   313→  }, []);
+   314→
+   315→  if (creating) {
+   316→    return (
+   317→      <GlassCard className="p-6">
+   318→        <ShimmerCard className="border-0 bg-transparent" />
+   319→      </GlassCard>
+   320→    );
+   321→  }
+   322→
+   323→  if (created) {
+   324→    return (
+   325→      <motion.div
+   326→        initial={{ opacity: 0, y: 12 }}
+   327→        animate={{ opacity: 1, y: 0 }}
+   328→        transition={{ duration: 0.3 }}
+   329→      >
+   330→        <GlassCard glow="purple" className="p-6">
+   331→          <div className="flex items-center gap-2 mb-4">
+   332→            <div className="w-8 h-8 rounded-lg bg-[rgba(34,197,94,0.1)] border border-[rgba(34,197,94,0.2)] flex items-center justify-center">
+   333→              <Zap className="w-4 h-4 text-[#4ade80]" />
+   334→            </div>
+   335→            <div>
+   336→              <h3 className="text-sm font-medium text-[#f0f0f5]">
+   337→                Endpoint Created
+   338→              </h3>
+   339→              <p className="text-xs text-[#55556a]">
+   340→                Send requests to this URL to record them
+   341→              </p>
+   342→            </div>
+   343→          </div>
+   344→
+   345→          <div className="flex items-center gap-2 p-3 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)] mb-4">
+   346→            <Globe className="w-4 h-4 text-[#55556a] flex-shrink-0" />
+   347→            <code className="text-sm text-[#a78bfa] font-mono truncate flex-1">
+   348→              {created.url}
+   349→            </code>
+   350→            <CopyUrlButton url={created.url} />
+   351→          </div>
+   352→
+   353→          <div className="flex items-center gap-2">
+   354→            <GlowButton
+   355→              variant="primary"
+   356→              size="sm"
+   357→              onClick={() => onCreated(created)}
+   358→            >
+   359→              View Requests
+   360→            </GlowButton>
+   361→            <GlowButton
+   362→              variant="secondary"
+   363→              size="sm"
+   364→              onClick={onCancel}
+   365→            >
+   366→              Back to List
+   367→            </GlowButton>
+   368→          </div>
+   369→        </GlassCard>
+   370→      </motion.div>
+   371→    );
+   372→  }
+   373→
+   374→  return null;
+   375→}
+   376→
+   377→// Request card component
+   378→function RequestCard({ request }: { request: RecordedRequest }) {
+   379→  const [copied, setCopied] = useState(false);
+   380→
+   381→  const handleCopyPayload = () => {
+   382→    const payload = {
+   383→      method: request.method,
+   384→      path: request.path,
+   385→      headers: safeParseJson(request.headers),
+   386→      query: safeParseJson(request.query),
+   387→      body: safeParseJson(request.body),
+   388→      timestamp: request.createdAt,
+   389→      ip: request.ipAddress,
+   390→    };
+   391→    navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+   392→    setCopied(true);
+   393→    setTimeout(() => setCopied(false), 1500);
+   394→  };
+   395→
+   396→  const parsedHeaders = safeParseJson(request.headers);
+   397→  const parsedBody = safeParseJson(request.body);
+   398→  const parsedQuery = safeParseJson(request.query);
+   399→
+   400→  return (
+   401→    <GlassCard className="p-4">
+   402→      <div className="flex items-center justify-between mb-3">
+   403→        <div className="flex items-center gap-2">
+   404→          <MethodBadge method={request.method} />
+   405→          {request.statusCode && <StatusBadge status={request.statusCode} />}
+   406→          {request.responseTime != null && (
+   407→            <span className="flex items-center gap-1 text-xs text-[#55556a]">
+   408→              <Clock className="w-3 h-3" />
+   409→              {request.responseTime}ms
+   410→            </span>
+   411→          )}
+   412→        </div>
+   413→        <div className="flex items-center gap-2">
+   414→          <span className="text-xs text-[#55556a]">
+   415→            {formatTimeAgo(request.createdAt)}
+   416→          </span>
+   417→          <GlowButton
+   418→            variant="ghost"
+   419→            size="sm"
+   420→            className="h-7 px-2 text-xs gap-1"
+   421→            onClick={handleCopyPayload}
+   422→          >
+   423→            {copied ? (
+   424→              <Check className="w-3 h-3" />
+   425→            ) : (
+   426→              <Copy className="w-3 h-3" />
+   427→            )}
+   428→            {copied ? 'Copied' : 'Copy'}
+   429→          </GlowButton>
+   430→        </div>
+   431→      </div>
+   432→
+   433→      <div className="flex items-center gap-2 text-xs text-[#55556a] mb-3">
+   434→        <span className="font-mono truncate">{request.path}</span>
+   435→        {request.ipAddress && (
+   436→          <>
+   437→            <span className="text-[rgba(255,255,255,0.1)]">|</span>
+   438→            <span className="flex items-center gap-1">
+   439→              <Globe className="w-3 h-3" />
+   440→              {request.ipAddress}
+   441→            </span>
+   442→          </>
+   443→        )}
+   444→      </div>
+   445→
+   446→      <div className="space-y-2">
+   447→        {/* Headers */}
+   448→        {parsedHeaders && typeof parsedHeaders === 'object' && Object.keys(parsedHeaders as Record<string, unknown>).length > 0 && (
+   449→          <Collapsible>
+   450→            <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-[#8888a0] hover:text-[#f0f0f5] transition-colors w-full py-1">
+   451→              <ChevronDown className="w-3 h-3 transition-transform [[data-state=open]>&]:rotate-0" />
+   452→              Headers
+   453→              <span className="text-[#55556a]">
+   454→                ({Object.keys(parsedHeaders as Record<string, unknown>).length})
+   455→              </span>
+   456→            </CollapsibleTrigger>
+   457→            <CollapsibleContent>
+   458→              <div className="mt-1">
+   459→                <JsonViewer data={parsedHeaders} maxDepth={3} />
+   460→              </div>
+   461→            </CollapsibleContent>
+   462→          </Collapsible>
+   463→        )}
+   464→
+   465→        {/* Query Params */}
+   466→        {parsedQuery && typeof parsedQuery === 'object' && Object.keys(parsedQuery as Record<string, unknown>).length > 0 && (
+   467→          <Collapsible>
+   468→            <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-[#8888a0] hover:text-[#f0f0f5] transition-colors w-full py-1">
+   469→              <ChevronDown className="w-3 h-3 transition-transform [[data-state=open]>&]:rotate-0" />
+   470→              Query Params
+   471→              <span className="text-[#55556a]">
+   472→                ({Object.keys(parsedQuery as Record<string, unknown>).length})
+   473→              </span>
+   474→            </CollapsibleTrigger>
+   475→            <CollapsibleContent>
+   476→              <div className="mt-1">
+   477→                <JsonViewer data={parsedQuery} maxDepth={3} />
+   478→              </div>
+   479→            </CollapsibleContent>
+   480→          </Collapsible>
+   481→        )}
+   482→
+   483→        {/* Body */}
+   484→        {request.body && request.body !== 'null' && (
+   485→          <Collapsible>
+   486→            <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-[#8888a0] hover:text-[#f0f0f5] transition-colors w-full py-1">
+   487→              <ChevronDown className="w-3 h-3 transition-transform [[data-state=open]>&]:rotate-0" />
+   488→              Body
+   489→              <span className="text-[#55556a]">
+   490→                ({(request.body.length / 1024).toFixed(1)} KB)
+   491→              </span>
+   492→            </CollapsibleTrigger>
+   493→            <CollapsibleContent>
+   494→              <div className="mt-1">
+   495→                {parsedBody && typeof parsedBody === 'object' ? (
+   496→                  <JsonViewer data={parsedBody} maxDepth={4} />
+   497→                ) : (
+   498→                  <div className="forge-code text-sm p-3 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)] text-[#8888a0] whitespace-pre-wrap break-all max-h-64 overflow-auto">
+   499→                    {request.body}
+   500→                  </div>
+   501→                )}
+   502→              </div>
+   503→            </CollapsibleContent>
+   504→          </Collapsible>
+   505→        )}
+   506→
+   507→        {/* Timestamp */}
+   508→        <div className="text-[10px] text-[#55556a] pt-1 border-t border-[rgba(255,255,255,0.04)]">
+   509→          {formatTimestamp(request.createdAt)}
+   510→        </div>
+   511→      </div>
+   512→    </GlassCard>
+   513→  );
+   514→}
+   515→
+   516→// Request detail panel
+   517→function RequestDetailPanel({
+   518→  endpoint,
+   519→  onBack,
+   520→}: {
+   521→  endpoint: Endpoint;
+   522→  onBack: () => void;
+   523→}) {
+   524→  const [requests, setRequests] = useState<RecordedRequest[]>([]);
+   525→  const [loading, setLoading] = useState(true);
+   526→  const [search, setSearch] = useState('');
+   527→  const [autoRefresh, setAutoRefresh] = useState(true);
+   528→  const [methodFilter, setMethodFilter] = useState<string>('all');
+   529→
+   530→  const fetchRequests = useCallback(async () => {
+   531→    try {
+   532→      const res = await fetch(`/api/recorder/endpoints/${endpoint.id}`);
+   533→      if (res.ok) {
+   534→        const data = await res.json();
+   535→        setRequests(data.requests || []);
+   536→      }
+   537→    } catch (err) {
+   538→      console.error('Failed to fetch requests:', err);
+   539→    } finally {
+   540→      setLoading(false);
+   541→    }
+   542→  }, [endpoint.id]);
+   543→
+   544→  useEffect(() => {
+   545→    fetchRequests();
+   546→  }, [fetchRequests]);
+   547→
+   548→  // Auto-refresh every 3 seconds
+   549→  useEffect(() => {
+   550→    if (!autoRefresh) return;
+   551→    const interval = setInterval(() => {
+   552→      fetchRequests();
+   553→    }, 3000);
+   554→    return () => clearInterval(interval);
+   555→  }, [autoRefresh, fetchRequests]);
+   556→
+   557→  const filteredRequests = requests.filter((r) => {
+   558→    const matchesSearch =
+   559→      !search ||
+   560→      r.method.toLowerCase().includes(search.toLowerCase()) ||
+   561→      r.path.toLowerCase().includes(search.toLowerCase()) ||
+   562→      r.ipAddress?.toLowerCase().includes(search.toLowerCase()) ||
+   563→      r.body?.toLowerCase().includes(search.toLowerCase());
+   564→    const matchesMethod = methodFilter === 'all' || r.method === methodFilter;
+   565→    return matchesSearch && matchesMethod;
+   566→  });
+   567→
+   568→  const methods = ['all', ...new Set(requests.map((r) => r.method))];
+   569→
+   570→  const handleExport = () => {
+   571→    const exportData = filteredRequests.map((r) => ({
+   572→      method: r.method,
+   573→      path: r.path,
+   574→      headers: safeParseJson(r.headers),
+   575→      query: safeParseJson(r.query),
+   576→      body: safeParseJson(r.body),
+   577→      statusCode: r.statusCode,
+   578→      responseTime: r.responseTime,
+   579→      ipAddress: r.ipAddress,
+   580→      createdAt: r.createdAt,
+   581→    }));
+   582→    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+   583→      type: 'application/json',
+   584→    });
+   585→    const url = URL.createObjectURL(blob);
+   586→    const a = document.createElement('a');
+   587→    a.href = url;
+   588→    a.download = `${endpoint.slug}-requests.json`;
+   589→    a.click();
+   590→    URL.revokeObjectURL(url);
+   591→  };
+   592→
+   593→  return (
+   594→    <motion.div
+   595→      initial={{ opacity: 0, x: 20 }}
+   596→      animate={{ opacity: 1, x: 0 }}
+   597→      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   598→    >
+   599→      {/* Endpoint URL bar */}
+   600→      <GlassCard className="p-4 mb-4">
+   601→        <div className="flex items-center gap-3">
+   602→          <GlowButton
+   603→            variant="ghost"
+   604→            size="icon"
+   605→            className="h-8 w-8 flex-shrink-0"
+   606→            onClick={onBack}
+   607→          >
+   608→            <ArrowLeft className="w-4 h-4" />
+   609→          </GlowButton>
+   610→          <div className="flex-1 min-w-0">
+   611→            <h2 className="text-sm font-medium text-[#f0f0f5] truncate">
+   612→              {endpoint.name}
+   613→            </h2>
+   614→            <div className="flex items-center gap-2 mt-1">
+   615→              <code className="text-xs text-[#a78bfa] font-mono truncate">
+   616→                {endpoint.url}
+   617→              </code>
+   618→              <CopyUrlButton url={endpoint.url} />
+   619→            </div>
+   620→          </div>
+   621→          <div className="flex items-center gap-2 flex-shrink-0">
+   622→            <GlowButton
+   623→              variant={autoRefresh ? 'primary' : 'secondary'}
+   624→              size="sm"
+   625→              onClick={() => setAutoRefresh(!autoRefresh)}
+   626→              className="gap-1.5"
+   627→            >
+   628→              <span
+   629→                className={`w-1.5 h-1.5 rounded-full ${
+   630→                  autoRefresh ? 'bg-green-400 animate-pulse' : 'bg-[#55556a]'
+   631→                }`}
+   632→              />
+   633→              {autoRefresh ? 'Live' : 'Paused'}
+   634→            </GlowButton>
+   635→          </div>
+   636→        </div>
+   637→      </GlassCard>
+   638→
+   639→      {/* Filters */}
+   640→      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-4">
+   641→        <AnimatedInput
+   642→          icon={<Search className="w-4 h-4" />}
+   643→          size="sm"
+   644→          placeholder="Search requests..."
+   645→          value={search}
+   646→          onChange={(e) => setSearch(e.target.value)}
+   647→          className="flex-1"
+   648→        />
+   649→        <div className="flex items-center gap-2">
+   650→          <div className="flex items-center gap-1 p-[3px] rounded-lg bg-[rgba(255,255,255,0.04)]">
+   651→            {methods.map((m) => (
+   652→              <button
+   653→                key={m}
+   654→                onClick={() => setMethodFilter(m)}
+   655→                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+   656→                  methodFilter === m
+   657→                    ? 'bg-[rgba(255,255,255,0.1)] text-[#f0f0f5]'
+   658→                    : 'text-[#55556a] hover:text-[#8888a0]'
+   659→                }`}
+   660→              >
+   661→                {m === 'all' ? 'All' : m}
+   662→              </button>
+   663→            ))}
+   664→          </div>
+   665→          <GlowButton
+   666→            variant="secondary"
+   667→            size="sm"
+   668→            className="gap-1.5"
+   669→            onClick={handleExport}
+   670→          >
+   671→            <Download className="w-3.5 h-3.5" />
+   672→            Export
+   673→          </GlowButton>
+   674→        </div>
+   675→      </div>
+   676→
+   677→      {/* Requests list */}
+   678→      {loading ? (
+   679→        <div className="space-y-4">
+   680→          <ShimmerCard />
+   681→          <ShimmerCard />
+   682→          <ShimmerCard />
+   683→        </div>
+   684→      ) : filteredRequests.length === 0 ? (
+   685→        <EmptyState
+   686→          icon={<Radio className="w-12 h-12" />}
+   687→          title={
+   688→            requests.length === 0
+   689→              ? 'No requests recorded yet'
+   690→              : 'No matching requests'
+   691→          }
+   692→          description={
+   693→            requests.length === 0
+   694→              ? `Send an HTTP request to the endpoint URL above. Any method (GET, POST, PUT, PATCH, DELETE) will be recorded.`
+   695→              : 'Try adjusting your search or filter criteria.'
+   696→          }
+   697→        />
+   698→      ) : (
+   699→        <motion.div
+   700→          variants={containerVariants}
+   701→          initial="hidden"
+   702→          animate="show"
+   703→          className="space-y-3"
+   704→        >
+   705→          <div className="text-xs text-[#55556a] px-1 flex items-center justify-between">
+   706→            <span>
+   707→              {filteredRequests.length} request
+   708→              {filteredRequests.length !== 1 ? 's' : ''}
+   709→              {methodFilter !== 'all' && ` (${methodFilter})`}
+   710→            </span>
+   711→            {search && <span>filtered by &ldquo;{search}&rdquo;</span>}
+   712→          </div>
+   713→          <ScrollArea className="h-[calc(100vh-22rem)]">
+   714→            <div className="space-y-3 pr-2">
+   715→              {filteredRequests.map((r) => (
+   716→                <motion.div key={r.id} variants={itemVariants}>
+   717→                  <RequestCard request={r} />
+   718→                </motion.div>
+   719→              ))}
+   720→            </div>
+   721→          </ScrollArea>
+   722→        </motion.div>
+   723→      )}
+   724→    </motion.div>
+   725→  );
+   726→}
+   727→
+   728→// Main component
+   729→export default function ApiRecorder() {
+   730→  const [view, setView] = useState<'list' | 'new' | 'detail'>('list');
+   731→  const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint | null>(null);
+   732→
+   733→  const handleSelectEndpoint = (ep: Endpoint) => {
+   734→    setSelectedEndpoint(ep);
+   735→    setView('detail');
+   736→  };
+   737→
+   738→  const handleEndpointCreated = (ep: Endpoint) => {
+   739→    setSelectedEndpoint(ep);
+   740→    setView('detail');
+   741→  };
+   742→
+   743→  return (
+   744→    <WorkspaceLayout
+   745→      actions={
+   746→        view !== 'new' && (
+   747→          <GlowButton
+   748→            variant="primary"
+   749→            size="sm"
+   750→            onClick={() => setView('new')}
+   751→          >
+   752→            <Plus className="w-4 h-4" />
+   753→            New Endpoint
+   754→          </GlowButton>
+   755→        )
+   756→      }
+   757→    >
+   758→      <AnimatePresence mode="wait">
+   759→        {view === 'list' && (
+   760→          <motion.div
+   761→            key="list"
+   762→            initial={{ opacity: 0, y: 12 }}
+   763→            animate={{ opacity: 1, y: 0 }}
+   764→            exit={{ opacity: 0, y: -8 }}
+   765→            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   766→          >
+   767→            <EndpointList
+   768→              onSelect={handleSelectEndpoint}
+   769→              onCreateNew={() => setView('new')}
+   770→            />
+   771→          </motion.div>
+   772→        )}
+   773→
+   774→        {view === 'new' && (
+   775→          <motion.div
+   776→            key="new"
+   777→            initial={{ opacity: 0, y: 12 }}
+   778→            animate={{ opacity: 1, y: 0 }}
+   779→            exit={{ opacity: 0, y: -8 }}
+   780→            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+   781→          >
+   782→            <NewEndpointPanel
+   783→              onCreated={handleEndpointCreated}
+   784→              onCancel={() => setView('list')}
+   785→            />
+   786→          </motion.div>
+   787→        )}
+   788→
+   789→        {view === 'detail' && selectedEndpoint && (
+   790→          <RequestDetailPanel
+   791→            key={selectedEndpoint.id}
+   792→            endpoint={selectedEndpoint}
+   793→            onBack={() => setView('list')}
+   794→          />
+   795→        )}
+   796→      </AnimatePresence>
+   797→    </WorkspaceLayout>
+   798→  );
+   799→}
